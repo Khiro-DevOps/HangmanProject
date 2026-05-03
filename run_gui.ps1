@@ -7,18 +7,17 @@ If none found, prints instructions to install Python.
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $guiPath = Join-Path $scriptDir 'gui.py'
 
-function Try-Run($cmd) {
+function Invoke-PythonRun($cmd) {
     $exe = Get-Command $cmd -ErrorAction SilentlyContinue
     if ($exe) {
         Write-Host "Launching with $cmd..."
         & $cmd $guiPath
         exit $LASTEXITCODE
     }
-    return $false
 }
 
-foreach ($c in @('py','python','python3')) {
-    Try-Run $c | Out-Null
+foreach ($c in @('py', 'python', 'python3')) {
+    Invoke-PythonRun $c
 }
 
 # Try common installation paths
@@ -40,5 +39,6 @@ foreach ($p in $possible) {
 }
 
 Write-Host "Python not found. Install Python from https://www.python.org/downloads/ and enable 'Add Python to PATH' in the installer." -ForegroundColor Yellow
-Write-Host "After installing, reopen PowerShell and run:`n    py gui.py`" -ForegroundColor Yellow
+Write-Host "After installing, reopen PowerShell and run:" -ForegroundColor Yellow
+Write-Host "    py gui.py" -ForegroundColor Yellow
 exit 1
