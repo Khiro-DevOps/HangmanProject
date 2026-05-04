@@ -2,6 +2,61 @@ import tkinter as tk
 from tkinter import font as tkfont
 from game_logic import HangmanGame
 from word_bank import get_random_word, get_config
+import os
+from PIL import Image, ImageTk
+
+# ── Sprite loader (loads bg + slices sprite sheets) ─────────────────────────
+class SpriteLoader:
+    def __init__(self, assets_dir: str):
+        self.assets_dir = assets_dir
+        self.bg_photo = None
+        self.frames = {"easy": [], "medium": [], "hard": []}
+        self._load_bg()
+        # map difficulty to (filename, frame_count)
+        self._sheets = {
+            "easy":   ("Rigby8.png", 8),
+            "medium": ("Mordecai6.png", 6),
+            "hard":   ("Benson4.png", 4),
+        }
+        self._frame_w = 300
+        self._frame_h = 400
+        self._load_sheets()
+
+    def _load_bg(self):
+        try:
+            path = os.path.join(self.assets_dir, "housebg.jpg")
+            img = Image.open(path).convert("RGBA")
+            img = img.resize((800, 600), Image.LANCZOS)
+            self.bg_photo = ImageTk.PhotoImage(img)
+        except Exception:
+            # missing bg -> leave None (canvas will use background color)
+            self.bg_photo = None
+
+    def _load_sheets(self):
+        for diff, (fname, count) in self._sheets.items():
+            path = os.path.join(self.assets_dir, fname)
+            try:
+                sheet = Image.open(path).convert("RGBA")
+                frames = []
+                for i in range(count):
+                    box = (i * self._frame_w, 0, (i + 1) * self._frame_w, self._frame_h)
+                    try:
+                        frame = sheet.crop(box)
+                    except Exception:
+                        # fallback to blank frame on crop failure
+                        frame = Image.new("RGBA", (self._frame_w, self._frame_h), (0, 0, 0, 0))
+                    frames.append(ImageTk.PhotoImage(frame))
+                self.frames[diff] = frames
+            except Exception:
+                # on missing sheet produce transparent placeholder frames
+                placeholder = Image.new("RGBA", (self._frame_w, self._frame_h), (50, 50, 50, 255))
+                self.frames[diff] = [ImageTk.PhotoImage(placeholder) for _ in range(count)]
+
+    def get_bg(self):
+        return self.bg_photo
+
+    def get_frames(self, difficulty: str):
+        return self.frames.get(difficulty, [])
 
 # ── Hangman ASCII stages (easy=8, medium=6, hard=4) ──────────────────────────
 STAGES = {
@@ -216,6 +271,9 @@ class HangmanApp:
         self.game: HangmanGame | None = None
         self.difficulty: str = "medium"
         self.timer_id = None   # after() id for countdown
+        # sprite loader (assets folder sibling to this file)
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        self.sprite_loader = SpriteLoader(assets_dir)
 
         self._show_difficulty_screen()
 
@@ -278,14 +336,51 @@ class HangmanApp:
 
         theme  = THEME[self.difficulty]
         cfg    = get_config(self.difficulty)
-        stages = get_stages(self.game.max_attempts)
 
-        self.master.geometry("520x620")
-        self._center_window(520, 620)
+        # Canvas window large enough for 800x600 canvas + controls below
+        self.master.geometry("820x760")
+        self._center_window(820, 760)
         self.master.configure(bg=theme["bg"])
 
-        root = tk.Frame(self.master, bg=theme["bg"], padx=18, pady=12)
+        root = tk.Frame(self.master, bg=theme["bg"], padx=6, pady=6)
         root.pack(fill=tk.BOTH, expand=True)
+
+        # ── Canvas (800x600) ───────────────────────────────────────────────
+        self.canvas = tk.Canvas(root, width=800, height=600, bg=theme["bg"], highlightthickness=0)
+        self.canvas.pack()
+        # draw background if available
+        self.bg_photo = self.sprite_loader.get_bg()
+        if self.bg_photo:
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.bg_photo)
+
+        # prepare sprite frames for this difficulty
+        self.sprite_frames = self.sprite_loader.get_frames(self.difficulty)
+        # show initial sprite (0 wrongs)
+        self.canvas_sprite = None
+        if self.sprite_frames:
+            # keep reference to current PhotoImage to avoid GC
+            self.current_sprite_photo = self.sprite_frames[0]
+            self.canvas_sprite = self.canvas.create_image(250, 50, anchor=tk.NW, image=self.current_sprite_photo)
+        else:
+            self.canvas_sprite = None
+
+        # ── Canvas text elements: word, attempts, guessed, feedback, timer ──
+        self.word_text = self.canvas.create_text(520, 120, text=self.game.get_display_word(),
+                                                 font=self.word_font, fill=theme["accent"], anchor=tk.CENTER)
+
+        self.attempts_text = self.canvas.create_text(520, 180, text="", font=self.body_font,
+                                                     fill=theme["text"], anchor=tk.CENTER)
+        self.guessed_text = self.canvas.create_text(520, 210, text="", font=self.small_font,
+                                                    fill="#aaa", anchor=tk.CENTER)
+        self.timer_text = self.canvas.create_text(760, 20, text="", font=self.body_font,
+                                                  fill="#f87171", anchor=tk.NE)
+        self.feedback_text = self.canvas.create_text(520, 250, text="", font=self.body_font,
+                                                     fill=theme["text"], width=420, anchor=tk.N)
+
+        # set initial text values
+        self._refresh_info_vars()  # will update attempts/guessed via canvas below
+        # update the displayed word explicitly
+        self.canvas.itemconfig(self.word_text, text=self.game.get_display_word())
 
         # ── Header row ───────────────────────────────────────────────────────
         hdr = tk.Frame(root, bg=theme["bg"])
@@ -306,39 +401,9 @@ class HangmanApp:
         tk.Label(root, textvariable=self.category_var, font=self.small_font,
                  bg=theme["bg"], fg="#aaa").pack(anchor="w")
 
-        # ── Hangman ASCII art ────────────────────────────────────────────────
-        self.ascii_var = tk.StringVar()
-        self.ascii_var.set(stages[-1])   # start at the "safe" stage
-        tk.Label(root, textvariable=self.ascii_var, font=self.mono_font,
-                 bg=theme["bg"], fg=theme["text"],
-                 justify=tk.LEFT).pack(pady=(4, 4))
-
-        # ── Word display ─────────────────────────────────────────────────────
-        self.word_var = tk.StringVar()
-        self.word_var.set(self.game.get_display_word())
-        tk.Label(root, textvariable=self.word_var, font=self.word_font,
-                 bg=theme["bg"], fg=theme["accent"],
-                 letter_spacing=4).pack(pady=(4, 2))
-
-        # ── Attempts & guessed ───────────────────────────────────────────────
-        self.attempts_var = tk.StringVar()
-        self.guessed_var  = tk.StringVar()
-        self._refresh_info_vars()
-
-        tk.Label(root, textvariable=self.attempts_var, font=self.body_font,
-                 bg=theme["bg"], fg=theme["text"]).pack()
-        tk.Label(root, textvariable=self.guessed_var, font=self.small_font,
-                 bg=theme["bg"], fg="#aaa", wraplength=460).pack()
-
-        # ── Timer (hard only) ────────────────────────────────────────────────
-        self.timer_var = tk.StringVar(value="")
-        self.timer_label = tk.Label(root, textvariable=self.timer_var,
-                                    font=self.body_font, bg=theme["bg"], fg="#f87171")
-        self.timer_label.pack()
-
         # ── Input row ────────────────────────────────────────────────────────
         inp = tk.Frame(root, bg=theme["bg"])
-        inp.pack(pady=8)
+        inp.pack(pady=8, fill=tk.X)
 
         self.entry = tk.Entry(inp, font=self.word_font, width=3,
                               justify="center", bg="#1a1a1a",
@@ -360,13 +425,6 @@ class HangmanApp:
                                       relief=tk.FLAT, bg="#333", fg="#facc15",
                                       cursor="hand2", command=self._on_hint)
             self.hint_btn.pack(side=tk.LEFT, padx=4)
-
-        # ── Feedback label ───────────────────────────────────────────────────
-        self.feedback_var = tk.StringVar(value="")
-        self.feedback_lbl = tk.Label(root, textvariable=self.feedback_var,
-                                     font=self.body_font, bg=theme["bg"],
-                                     fg=theme["text"], wraplength=460)
-        self.feedback_lbl.pack(pady=4)
 
         # start timer if hard
         if cfg["timer_seconds"]:
@@ -432,8 +490,11 @@ class HangmanApp:
             return
 
         color = "#f87171" if self._remaining_time <= 10 else "#facc15"
-        self.timer_var.set(f"⏱ {self._remaining_time}s remaining")
-        self.timer_label.config(fg=color)
+        # update canvas timer text
+        try:
+            self.canvas.itemconfig(self.timer_text, text=f"⏱ {self._remaining_time}s remaining", fill=color)
+        except Exception:
+            pass
         self._remaining_time -= 1
         self.timer_id = self.master.after(1000, self._tick)
 
@@ -446,23 +507,44 @@ class HangmanApp:
     # DISPLAY HELPERS
     # ═════════════════════════════════════════════════════════════════════════
     def _refresh_display(self):
-        self.word_var.set(self.game.get_display_word())
+        # update word on canvas
+        try:
+            self.canvas.itemconfig(self.word_text, text=self.game.get_display_word())
+        except Exception:
+            pass
+        # update attempts/guessed via helper
         self._refresh_info_vars()
-        # update ASCII
-        stages  = get_stages(self.game.max_attempts)
-        wrongs  = self.game.max_attempts - self.game.remaining_attempts
-        idx     = min(wrongs, len(stages) - 1)
-        self.ascii_var.set(stages[-(idx + 1)])
+        # update sprite based on wrong guesses
+        wrongs = self.game.max_attempts - self.game.remaining_attempts
+        if getattr(self, "sprite_frames", None):
+            idx = min(wrongs, len(self.sprite_frames) - 1)
+            self.current_sprite_photo = self.sprite_frames[idx]
+            try:
+                self.canvas.itemconfig(self.canvas_sprite, image=self.current_sprite_photo)
+            except Exception:
+                # if sprite not yet placed, create it
+                self.canvas_sprite = self.canvas.create_image(250, 50, anchor=tk.NW, image=self.current_sprite_photo)
+        # update timer text (in case of quick win/lose)
+        cfg = get_config(self.difficulty)
+        if cfg["timer_seconds"] and self.game.get_status() == "ongoing":
+            self.canvas.itemconfig(self.timer_text, text=f"⏱ {self._remaining_time}s remaining")
 
     def _refresh_info_vars(self):
         hearts = "❤" * self.game.remaining_attempts + "🖤" * (
             self.game.max_attempts - self.game.remaining_attempts)
-        self.attempts_var.set(f"{hearts}  ({self.game.remaining_attempts} left)")
-        self.guessed_var.set(f"Guessed: {self.game.get_guessed_letters()}")
+        attempts_text = f"{hearts}  ({self.game.remaining_attempts} left)"
+        guessed_text = f"Guessed: {self.game.get_guessed_letters()}"
+        try:
+            self.canvas.itemconfig(self.attempts_text, text=attempts_text)
+            self.canvas.itemconfig(self.guessed_text, text=guessed_text)
+        except Exception:
+            pass
 
     def _set_feedback(self, msg: str, color: str = "#e5e5e5"):
-        self.feedback_var.set(msg)
-        self.feedback_lbl.config(fg=color)
+        try:
+            self.canvas.itemconfig(self.feedback_text, text=msg, fill=color)
+        except Exception:
+            pass
 
     def _check_end(self):
         status = self.game.get_status()
@@ -470,14 +552,17 @@ class HangmanApp:
             self._cancel_timer()
             self.timer_var.set("")
             score = self.game.get_score()
-            self._set_feedback(
-                f"🎉 YOU WIN!  Score: {score} pts\nWord was: {self.game.word}", "#4ade80")
+            self._set_feedback(f"🎉 YOU WIN!  Score: {score} pts\nWord was: {self.game.word}", "#4ade80")
             self._disable_input()
             self._show_play_again()
         elif status == "lose":
             self._cancel_timer()
             self.timer_var.set("")
-            self.word_var.set(self.game.word)   # reveal word
+            # reveal word on canvas
+            try:
+                self.canvas.itemconfig(self.word_text, text=self.game.word)
+            except Exception:
+                pass
             self._set_feedback(f"💀 GAME OVER!  Word was: {self.game.word}", "#f87171")
             self._disable_input()
             self._show_play_again()
