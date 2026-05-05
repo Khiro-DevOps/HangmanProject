@@ -19,7 +19,7 @@ class SpriteLoader:
             "hard":   ("Benson4.png",   4),
         }
         self._button_files = [
-            "RegularGame.png",
+            "Regular_Game.png",
             "New_Game.png",
             "Change_Difficulty.png",
             "Exit_Game.png",
@@ -150,7 +150,7 @@ class HangmanApp:
             canvas.create_image(0, 0, anchor=tk.NW, image=bg)
             self._photo_refs.append(bg)
 
-        # Title — RegularGame.png
+        # Title — Regular_Game.png
         title_photo = self.sprite_loader.get_button("RegularGame", width=500)
         if title_photo:
             canvas.create_image(400, 110, anchor=tk.CENTER, image=title_photo)
