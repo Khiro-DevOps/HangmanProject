@@ -126,7 +126,7 @@ class HangmanApp:
         self._photo_refs = []
 
         # Load all assets once
-        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        assets_dir = os.path.join(os.path.dirname(__file__), "..", "assets")
         self.sprite_loader = SpriteLoader(assets_dir)
 
         self._show_main_menu()
@@ -151,7 +151,7 @@ class HangmanApp:
             self._photo_refs.append(bg)
 
         # Title — Regular_Game.png
-        title_photo = self.sprite_loader.get_button("RegularGame", width=500)
+        title_photo = self.sprite_loader.get_button("Regular_Game", width=500)
         if title_photo:
             canvas.create_image(400, 110, anchor=tk.CENTER, image=title_photo)
             self._photo_refs.append(title_photo)
@@ -163,13 +163,13 @@ class HangmanApp:
         btn_data = [
             ("New_Game",          320, self._show_difficulty_screen),
             ("Change_Difficulty", 410, self._show_difficulty_screen),
-            ("Exit_Game",         490, self.master.quit),
+            ("Exit_Game",         500, self.master.quit),
         ]
         for key, y, cmd in btn_data:
             photo = self.sprite_loader.get_button(key, width=280)
             if photo:
-                lbl = tk.Label(canvas, image=photo, bg="", cursor="hand2",
-                               borderwidth=0, highlightthickness=0)
+                lbl = tk.Label(canvas, image=photo, bg="#000000", cursor="hand2",
+                                borderwidth=0, highlightthickness=0)
                 lbl.image = photo  # keep ref
                 lbl.bind("<Button-1>", lambda e, c=cmd: c())
                 canvas.create_window(400, y, window=lbl)
@@ -217,7 +217,7 @@ class HangmanApp:
         for key, diff, y in diff_data:
             photo = self.sprite_loader.get_button(key, width=220)
             if photo:
-                lbl = tk.Label(canvas, image=photo, bg="", cursor="hand2",
+                lbl = tk.Label(canvas, image=photo, bg="#0f0f0f", cursor="hand2",
                                borderwidth=0, highlightthickness=0)
                 lbl.image = photo
                 lbl.bind("<Button-1>", lambda e, d=diff: self._start_game(d))
@@ -232,7 +232,7 @@ class HangmanApp:
         # Back button
         back_photo = self.sprite_loader.get_button("Back", width=140)
         if back_photo:
-            lbl = tk.Label(canvas, image=back_photo, bg="", cursor="hand2",
+            lbl = tk.Label(canvas, image=back_photo, bg="#0f0f0f", cursor="hand2",
                            borderwidth=0, highlightthickness=0)
             lbl.image = back_photo
             lbl.bind("<Button-1>", lambda e: self._show_main_menu())
