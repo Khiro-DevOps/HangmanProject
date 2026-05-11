@@ -169,7 +169,7 @@ class HangmanApp:
 
         # Menu buttons
         btn_data = [
-            ("New_Game",          320, self._show_difficulty_screen),
+            ("New_Game", 320, lambda: self._start_game(self.difficulty)),
             ("Change_Difficulty", 410, self._show_difficulty_screen),
             ("Exit_Game",         500, self.master.quit),
         ]
