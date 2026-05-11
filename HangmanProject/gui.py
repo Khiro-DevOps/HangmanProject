@@ -52,9 +52,17 @@ class SpriteLoader:
                 sheet_w, sheet_h = sheet.size
                 frame_w = sheet_w // count
                 frames = []
+                # Per-character target sizes preserving aspect ratio at height=352
+                TARGET_SIZES = {
+                    "easy":   (366, 352),
+                    "medium": (489, 352),
+                    "hard":   (472, 352),
+                }
+
+                target_w, target_h = TARGET_SIZES[diff]
                 for i in range(count):
                     box = (i * frame_w, 0, (i + 1) * frame_w, sheet_h)
-                    frame = sheet.crop(box)
+                    frame = sheet.crop(box).resize((target_w, target_h), Image.LANCZOS)
                     frames.append(ImageTk.PhotoImage(frame))
                 self.frames[diff] = frames
             except Exception:
