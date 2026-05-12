@@ -5,13 +5,43 @@ from word_bank import get_random_word, get_config
 import os
 from PIL import Image, ImageTk
 
-# ── Sprite & Asset Loader ─────────────────────────────────────────────────────
+# ── QWERTY layout ─────────────────────────────────────────────────────────────
+QWERTY = [
+    list("QWERTYUIOP"),
+    list("ASDFGHJKL"),
+    list("ZXCVBNM"),
+]
+
+# ── Per-character display sizes (preserves aspect ratio at same height) ────────
+TARGET_SIZES = {
+    "easy":   (366, 352),
+    "medium": (489, 352),
+    "hard":   (472, 352),
+}
+
+# ── Canvas dimensions ─────────────────────────────────────────────────────────
+CW, CH = 900, 650   # canvas width, height
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+THEME = {
+    "easy":   {"bg": "#1a2e1a", "accent": "#4ade80", "btn": "#16a34a", "text": "#dcfce7"},
+    "medium": {"bg": "#1e1e2e", "accent": "#facc15", "btn": "#ca8a04", "text": "#fefce8"},
+    "hard":   {"bg": "#2e1a1a", "accent": "#f87171", "btn": "#dc2626", "text": "#fee2e2"},
+}
+BASE_BG   = "#0f0f0f"
+BASE_TEXT = "#e5e5e5"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SPRITE & ASSET LOADER
+# ═════════════════════════════════════════════════════════════════════════════
 class SpriteLoader:
     def __init__(self, assets_dir: str):
         self.assets_dir = assets_dir
-        self.bg_photo = None
-        self.frames = {"easy": [], "medium": [], "hard": []}
-        self.buttons = {}
+        self.bg_menu    = None
+        self.bg_game    = None
+        self.frames     = {"easy": [], "medium": [], "hard": []}
+        self.buttons    = {}
 
         self._sheets = {
             "easy":   ("Rigby8.png",    8),
@@ -32,87 +62,101 @@ class SpriteLoader:
         self._load_bg()
         self._load_sheets()
         self._load_buttons()
+        self._load_keyboard()
+        self._load_hearts()
 
     # ── Background ────────────────────────────────────────────────────────────
     def _load_bg(self):
         path = os.path.join(self.assets_dir, "housebg.jpg")
         try:
             img = Image.open(path).convert("RGBA")
-            img = img.resize((800, 600), Image.LANCZOS)
-            self.bg_photo = ImageTk.PhotoImage(img)
+            self.bg_menu = ImageTk.PhotoImage(img.resize((800, 600), Image.LANCZOS))
+            self.bg_game = ImageTk.PhotoImage(img.resize((CW, CH),   Image.LANCZOS))
         except Exception:
-            self.bg_photo = None
+            self.bg_menu = None
+            self.bg_game = None
 
-    # ── Sprite Sheets ─────────────────────────────────────────────────────────
+    # ── Sprite sheets ─────────────────────────────────────────────────────────
     def _load_sheets(self):
         for diff, (fname, count) in self._sheets.items():
             path = os.path.join(self.assets_dir, fname)
+            tw, th = TARGET_SIZES[diff]
             try:
-                sheet = Image.open(path).convert("RGBA")
-                sheet_w, sheet_h = sheet.size
-                frame_w = sheet_w // count
+                sheet  = Image.open(path).convert("RGBA")
+                sw, sh = sheet.size
+                fw     = sw // count
                 frames = []
-                # Per-character target sizes preserving aspect ratio at height=352
-                TARGET_SIZES = {
-                    "easy":   (366, 352),
-                    "medium": (489, 352),
-                    "hard":   (472, 352),
-                }
-
-                target_w, target_h = TARGET_SIZES[diff]
                 for i in range(count):
-                    box = (i * frame_w, 0, (i + 1) * frame_w, sheet_h)
-                    frame = sheet.crop(box).resize((target_w, target_h), Image.LANCZOS)
+                    box   = (i * fw, 0, (i + 1) * fw, sh)
+                    frame = sheet.crop(box).resize((tw, th), Image.LANCZOS)
                     frames.append(ImageTk.PhotoImage(frame))
                 self.frames[diff] = frames
             except Exception:
-                placeholder = Image.new("RGBA", (300, 400), (50, 50, 50, 180))
+                placeholder = Image.new("RGBA", (tw, th), (50, 50, 50, 180))
                 self.frames[diff] = [ImageTk.PhotoImage(placeholder) for _ in range(count)]
 
     # ── Button PNGs ───────────────────────────────────────────────────────────
     def _load_buttons(self):
         for fname in self._button_files:
-            key = fname.replace(".png", "")
+            key  = fname.replace(".png", "")
             path = os.path.join(self.assets_dir, fname)
             try:
-                img = Image.open(path).convert("RGBA")
-                self.buttons[key] = img  # store as PIL Image so we can resize on demand
+                self.buttons[key] = Image.open(path).convert("RGBA")
             except Exception:
                 self.buttons[key] = None
 
+    # ── Keyboard images ───────────────────────────────────────────────────────
+    def _load_keyboard(self):
+        kb_w = CW - 20
+        for key, fname in [("kb_normal", "keyboard_normal.png"),
+                            ("kb_used",   "keyboard_key_used.png")]:
+            path = os.path.join(self.assets_dir, fname)
+            try:
+                img    = Image.open(path).convert("RGBA")
+                ow, oh = img.size
+                ratio  = kb_w / ow
+                kb_h   = int(oh * ratio)
+                self.buttons[key] = img.resize((kb_w, kb_h), Image.LANCZOS)
+            except Exception:
+                self.buttons[key] = None
+
+        kb = self.buttons.get("kb_normal")
+        self.kb_photo = ImageTk.PhotoImage(kb) if kb else None
+        self.kb_size  = kb.size if kb else (kb_w, 180)
+
+    # ── Heart images ──────────────────────────────────────────────────────────
+    def _load_hearts(self):
+        HEART_SIZE = (36, 36)
+        for key, fname in [("heart_full",  "heart_full.png"),
+                            ("heart_empty", "heart_empty.png")]:
+            path = os.path.join(self.assets_dir, fname)
+            try:
+                img = Image.open(path).convert("RGBA").resize(HEART_SIZE, Image.LANCZOS)
+                self.buttons[key] = ImageTk.PhotoImage(img)
+            except Exception:
+                self.buttons[key] = None
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
     def get_button(self, key: str, width: int = None, height: int = None):
-        """Return a resized ImageTk.PhotoImage for the button key."""
         img = self.buttons.get(key)
-        if img is None:
-            return None
+        if img is None or isinstance(img, ImageTk.PhotoImage):
+            return img
         if width or height:
-            orig_w, orig_h = img.size
+            ow, oh = img.size
             if width and not height:
-                ratio = width / orig_w
-                height = int(orig_h * ratio)
+                height = int(oh * width / ow)
             elif height and not width:
-                ratio = height / orig_h
-                width = int(orig_w * ratio)
+                width = int(ow * height / oh)
             img = img.resize((width, height), Image.LANCZOS)
         return ImageTk.PhotoImage(img)
-
-    def get_bg(self):
-        return self.bg_photo
 
     def get_frames(self, difficulty: str):
         return self.frames.get(difficulty, [])
 
 
-# ── Colors & Theme ────────────────────────────────────────────────────────────
-THEME = {
-    "easy":   {"bg": "#1a2e1a", "accent": "#4ade80", "btn": "#16a34a", "text": "#dcfce7"},
-    "medium": {"bg": "#1e1e2e", "accent": "#facc15", "btn": "#ca8a04", "text": "#fefce8"},
-    "hard":   {"bg": "#2e1a1a", "accent": "#f87171", "btn": "#dc2626", "text": "#fee2e2"},
-}
-BASE_BG   = "#0f0f0f"
-BASE_TEXT = "#e5e5e5"
-
-
+# ═════════════════════════════════════════════════════════════════════════════
+# APP
+# ═════════════════════════════════════════════════════════════════════════════
 class HangmanApp:
     def __init__(self, master: tk.Tk) -> None:
         self.master = master
@@ -120,28 +164,24 @@ class HangmanApp:
         self.master.resizable(False, False)
         self.master.configure(bg=BASE_BG)
 
-        # Fonts
-        self.title_font    = tkfont.Font(family="Courier New", size=20, weight="bold")
-        self.word_font     = tkfont.Font(family="Courier New", size=22, weight="bold")
-        self.body_font     = tkfont.Font(family="Courier New", size=11)
-        self.small_font    = tkfont.Font(family="Courier New", size=9)
+        self.title_font = tkfont.Font(family="Courier New", size=20, weight="bold")
+        self.word_font  = tkfont.Font(family="Courier New", size=18, weight="bold")
+        self.body_font  = tkfont.Font(family="Courier New", size=11)
+        self.small_font = tkfont.Font(family="Courier New", size=9)
 
-        self.game: HangmanGame | None = None
-        self.difficulty: str = "medium"
-        self.timer_id = None
+        self.game:       HangmanGame | None = None
+        self.difficulty: str  = "medium"
+        self.timer_id          = None
+        self._photo_refs       = []
 
-        # Keep PhotoImage references alive (prevents garbage collection)
-        self._photo_refs = []
-
-        # Load all assets once
         assets_dir = os.path.join(os.path.dirname(__file__), "..", "assets")
-        self.sprite_loader = SpriteLoader(assets_dir)
+        self.loader = SpriteLoader(assets_dir)
 
         self._show_main_menu()
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     # SCREEN 0 — Main Menu
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     def _show_main_menu(self):
         self._cancel_timer()
         self._clear()
@@ -152,45 +192,40 @@ class HangmanApp:
                            bg=BASE_BG, highlightthickness=0)
         canvas.pack()
 
-        # Background
-        bg = self.sprite_loader.get_bg()
-        if bg:
-            canvas.create_image(0, 0, anchor=tk.NW, image=bg)
-            self._photo_refs.append(bg)
+        if self.loader.bg_menu:
+            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_menu)
+            self._photo_refs.append(self.loader.bg_menu)
 
-        # Title — Regular_Game.png
-        title_photo = self.sprite_loader.get_button("Regular_Game", width=500)
-        if title_photo:
-            canvas.create_image(400, 110, anchor=tk.CENTER, image=title_photo)
-            self._photo_refs.append(title_photo)
+        title = self.loader.get_button("Regular_Game", width=500)
+        if title:
+            canvas.create_image(400, 110, anchor=tk.CENTER, image=title)
+            self._photo_refs.append(title)
         else:
             canvas.create_text(400, 110, text="REGULAR HANGMAN",
                                font=self.title_font, fill=BASE_TEXT)
 
-        # Menu buttons
         btn_data = [
-            ("New_Game", 320, lambda: self._start_game(self.difficulty)),
-            ("Change_Difficulty", 410, self._show_difficulty_screen),
+            ("New_Game",          300, lambda: self._start_game(self.difficulty)),
+            ("Change_Difficulty", 390, self._show_difficulty_screen),
             ("Exit_Game",         500, self.master.quit),
         ]
         for key, y, cmd in btn_data:
-            photo = self.sprite_loader.get_button(key, width=280)
+            photo = self.loader.get_button(key, width=280)
             if photo:
-                lbl = tk.Label(canvas, image=photo, bg="#000000", cursor="hand2",
-                                borderwidth=0, highlightthickness=0)
-                lbl.image = photo  # keep ref
+                lbl = tk.Label(canvas, image=photo, bg="#0f0f0f",
+                               cursor="hand2", borderwidth=0, highlightthickness=0)
+                lbl.image = photo
                 lbl.bind("<Button-1>", lambda e, c=cmd: c())
                 canvas.create_window(400, y, window=lbl)
             else:
-                # Fallback text button
+                tag = f"btn_{key}"
                 canvas.create_text(400, y, text=key.replace("_", " ").upper(),
-                                   font=self.body_font, fill=BASE_TEXT,
-                                   tags=(key,))
-                canvas.tag_bind(key, "<Button-1>", lambda e, c=cmd: c())
+                                   font=self.body_font, fill=BASE_TEXT, tags=(tag,))
+                canvas.tag_bind(tag, "<Button-1>", lambda e, c=cmd: c())
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     # SCREEN 1 — Difficulty Selection
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     def _show_difficulty_screen(self):
         self._cancel_timer()
         self._clear()
@@ -201,64 +236,57 @@ class HangmanApp:
                            bg=BASE_BG, highlightthickness=0)
         canvas.pack()
 
-        # Background
-        bg = self.sprite_loader.get_bg()
-        if bg:
-            canvas.create_image(0, 0, anchor=tk.NW, image=bg)
-            self._photo_refs.append(bg)
+        if self.loader.bg_menu:
+            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_menu)
+            self._photo_refs.append(self.loader.bg_menu)
 
-        # "Change Difficulty" header
-        header_photo = self.sprite_loader.get_button("Change_Difficulty", width=420)
-        if header_photo:
-            canvas.create_image(400, 100, anchor=tk.CENTER, image=header_photo)
-            self._photo_refs.append(header_photo)
+        hdr = self.loader.get_button("Change_Difficulty", width=420)
+        if hdr:
+            canvas.create_image(400, 100, anchor=tk.CENTER, image=hdr)
+            self._photo_refs.append(hdr)
         else:
             canvas.create_text(400, 100, text="CHANGE DIFFICULTY",
                                font=self.title_font, fill=BASE_TEXT)
 
-        # Difficulty buttons
         diff_data = [
-            ("Easy",   "easy",   250),
+            ("Easy",   "easy",   240),
             ("Medium", "medium", 360),
             ("Hard",   "hard",   470),
         ]
         for key, diff, y in diff_data:
-            photo = self.sprite_loader.get_button(key, width=220)
+            photo = self.loader.get_button(key, width=220)
             if photo:
-                lbl = tk.Label(canvas, image=photo, bg="#0f0f0f", cursor="hand2",
-                               borderwidth=0, highlightthickness=0)
+                lbl = tk.Label(canvas, image=photo, bg="#0f0f0f",
+                               cursor="hand2", borderwidth=0, highlightthickness=0)
                 lbl.image = photo
                 lbl.bind("<Button-1>", lambda e, d=diff: self._start_game(d))
                 canvas.create_window(400, y, window=lbl)
             else:
+                tag = f"diff_{key}"
                 canvas.create_text(400, y, text=key.upper(),
-                                   font=self.body_font, fill=BASE_TEXT,
-                                   tags=(key,))
-                canvas.tag_bind(key, "<Button-1>",
-                                lambda e, d=diff: self._start_game(d))
+                                   font=self.body_font, fill=BASE_TEXT, tags=(tag,))
+                canvas.tag_bind(tag, "<Button-1>", lambda e, d=diff: self._start_game(d))
 
-        # Back button
-        back_photo = self.sprite_loader.get_button("Back", width=140)
-        if back_photo:
-            lbl = tk.Label(canvas, image=back_photo, bg="#0f0f0f", cursor="hand2",
-                           borderwidth=0, highlightthickness=0)
-            lbl.image = back_photo
+        back = self.loader.get_button("Back", width=130)
+        if back:
+            lbl = tk.Label(canvas, image=back, bg="#0f0f0f",
+                           cursor="hand2", borderwidth=0, highlightthickness=0)
+            lbl.image = back
             lbl.bind("<Button-1>", lambda e: self._show_main_menu())
-            canvas.create_window(100, 550, window=lbl)
+            canvas.create_window(80, 560, window=lbl)
         else:
             canvas.create_text(80, 560, text="← BACK",
-                               font=self.small_font, fill="#aaa",
-                               tags="back")
+                               font=self.small_font, fill="#aaa", tags=("back",))
             canvas.tag_bind("back", "<Button-1>", lambda e: self._show_main_menu())
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     # SCREEN 2 — Game Screen
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     def _start_game(self, difficulty: str):
         self._cancel_timer()
         self.difficulty = difficulty
-        word, category = get_random_word(difficulty)
-        self.game = HangmanGame(word, difficulty, category)
+        word, category  = get_random_word(difficulty)
+        self.game       = HangmanGame(word, difficulty, category)
         self._show_game_screen()
 
     def _show_game_screen(self):
@@ -268,126 +296,181 @@ class HangmanApp:
         theme = THEME[self.difficulty]
         cfg   = get_config(self.difficulty)
 
-        self.master.geometry("820x760")
-        self._center_window(820, 760)
+        self.master.geometry(f"{CW}x{CH}")
+        self._center_window(CW, CH)
         self.master.configure(bg=theme["bg"])
 
-        root = tk.Frame(self.master, bg=theme["bg"], padx=6, pady=6)
-        root.pack(fill=tk.BOTH, expand=True)
-
-        # ── Canvas ────────────────────────────────────────────────────────────
-        self.canvas = tk.Canvas(root, width=800, height=600,
+        self.canvas = tk.Canvas(self.master, width=CW, height=CH,
                                 bg=theme["bg"], highlightthickness=0)
         self.canvas.pack()
 
         # Background
-        self.bg_photo = self.sprite_loader.get_bg()
-        if self.bg_photo:
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.bg_photo)
+        if self.loader.bg_game:
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_game)
+            self._photo_refs.append(self.loader.bg_game)
 
-        # Sprite — show frame 0 (no wrong guesses yet)
-        self.sprite_frames = self.sprite_loader.get_frames(self.difficulty)
+        # ── Layout constants ──────────────────────────────────────────────────
+        KB_H       = self.loader.kb_size[1]
+        KB_Y       = CH - KB_H - 10
+        CHAR_Y     = KB_Y - TARGET_SIZES[self.difficulty][1] + 20
+        HEART_Y    = 12
+        WORD_Y     = 90
+        RIGHT_X    = TARGET_SIZES[self.difficulty][0] + 20
+        FEEDBACK_Y = WORD_Y + 110
+
+        # ── Character sprite (left side) ──────────────────────────────────────
+        self.sprite_frames = self.loader.get_frames(self.difficulty)
         self.canvas_sprite = None
         if self.sprite_frames:
             self.current_sprite_photo = self.sprite_frames[0]
             self.canvas_sprite = self.canvas.create_image(
-                250, 50, anchor=tk.NW, image=self.current_sprite_photo)
+                0, CHAR_Y, anchor=tk.NW, image=self.current_sprite_photo)
 
-        # ── Canvas text elements ───────────────────────────────────────────────
-        self.word_text = self.canvas.create_text(
-            520, 120, text=self.game.get_display_word(),
-            font=self.word_font, fill=theme["accent"], anchor=tk.CENTER)
+        # ── Hearts top left ───────────────────────────────────────────────────
+        self.heart_items = []
+        heart_full  = self.loader.buttons.get("heart_full")
+        heart_empty = self.loader.buttons.get("heart_empty")
+        hx = 12
+        for i in range(self.game.max_attempts):
+            item = self.canvas.create_image(hx, HEART_Y, anchor=tk.NW,
+                                            image=heart_full)
+            self.heart_items.append(item)
+            if heart_full:
+                self._photo_refs.append(heart_full)
+            hx += 42
 
-        self.attempts_text = self.canvas.create_text(
-            520, 180, text="", font=self.body_font,
-            fill=theme["text"], anchor=tk.CENTER)
+        # ── Difficulty badge + Menu button (top right) ────────────────────────
+        self.canvas.create_text(
+            CW - 10, 14, text=f"[ {self.difficulty.upper()} ]",
+            font=self.body_font, fill=theme["accent"], anchor=tk.NE)
 
-        self.guessed_text = self.canvas.create_text(
-            520, 210, text="", font=self.small_font,
-            fill="#aaa", anchor=tk.CENTER)
+        menu_tag = "menu_btn"
+        self.canvas.create_text(
+            CW - 10, 34, text="↩ Menu",
+            font=self.small_font, fill="#aaa", anchor=tk.NE, tags=(menu_tag,))
+        self.canvas.tag_bind(menu_tag, "<Button-1>",
+                             lambda e: self._show_main_menu())
 
+        # ── Category (easy only) ──────────────────────────────────────────────
+        if cfg["show_category"]:
+            self.canvas.create_text(
+                CW - 10, 54, text=f"Category: {self.game.category}",
+                font=self.small_font, fill="#aaa", anchor=tk.NE)
+
+        # ── Timer text (hard mode) ────────────────────────────────────────────
         self.timer_text = self.canvas.create_text(
-            760, 20, text="", font=self.body_font,
-            fill="#f87171", anchor=tk.NE)
+            CW - 10, 72, text="",
+            font=self.body_font, fill="#f87171", anchor=tk.NE)
 
+        # ── Word letter boxes (right panel) ───────────────────────────────────
+        self._build_word_display(RIGHT_X, WORD_Y, theme)
+
+        # ── Feedback text ─────────────────────────────────────────────────────
+        panel_cx = RIGHT_X + (CW - RIGHT_X) // 2
         self.feedback_text = self.canvas.create_text(
-            520, 250, text="", font=self.body_font,
-            fill=theme["text"], width=420, anchor=tk.N)
+            panel_cx, FEEDBACK_Y, text="",
+            font=self.body_font, fill=theme["text"],
+            width=CW - RIGHT_X - 10, anchor=tk.CENTER)
 
-        self._refresh_info_vars()
+        # ── Keyboard (bottom) ─────────────────────────────────────────────────
+        self._build_keyboard(KB_Y, theme)
 
-        # ── Header row ─────────────────────────────────────────────────────────
-        hdr = tk.Frame(root, bg=theme["bg"])
-        hdr.pack(fill=tk.X)
-
-        tk.Label(hdr, text=f"[ {self.difficulty.upper()} ]",
-                 font=self.body_font, bg=theme["bg"],
-                 fg=theme["accent"]).pack(side=tk.LEFT)
-
-        tk.Button(hdr, text="↩ Menu", font=self.small_font,
-                  relief=tk.FLAT, bg=theme["bg"], fg="#888",
-                  cursor="hand2",
-                  command=self._show_main_menu).pack(side=tk.RIGHT)
-
-        # ── Category label (easy only) ─────────────────────────────────────────
-        cat_text = f"Category: {self.game.category}" if cfg["show_category"] else ""
-        self.category_label = tk.Label(root, text=cat_text,
-                                       font=self.small_font,
-                                       bg=theme["bg"], fg="#aaa")
-        self.category_label.pack(anchor="w")
-
-        # ── Input row ──────────────────────────────────────────────────────────
-        inp = tk.Frame(root, bg=theme["bg"])
-        inp.pack(pady=8, fill=tk.X)
-
-        self.entry = tk.Entry(inp, font=self.word_font, width=3,
-                              justify="center", bg="#1a1a1a",
-                              fg=theme["accent"],
-                              insertbackground=theme["accent"],
-                              relief=tk.FLAT, highlightthickness=1,
-                              highlightbackground=theme["accent"])
-        self.entry.pack(side=tk.LEFT, padx=6)
-        self.entry.focus()
-        self.entry.bind("<Return>", lambda e: self._on_guess())
-
-        tk.Button(inp, text="GUESS", font=self.body_font,
-                  relief=tk.FLAT, bg=theme["btn"], fg="#fff",
-                  cursor="hand2", activebackground=theme["accent"],
-                  command=self._on_guess).pack(side=tk.LEFT, padx=4)
-
-        # ── Hint button (easy + medium) ────────────────────────────────────────
+        # ── Hint button (easy + medium) ───────────────────────────────────────
         if cfg["hint_available"]:
-            self.hint_btn = tk.Button(inp, text="💡 HINT",
-                                      font=self.body_font,
-                                      relief=tk.FLAT, bg="#333",
-                                      fg="#facc15", cursor="hand2",
-                                      command=self._on_hint)
-            self.hint_btn.pack(side=tk.LEFT, padx=4)
+            hint_tag = "hint_btn"
+            self.canvas.create_text(
+                CW - 15, KB_Y - 20,
+                text="💡 HINT", font=self.body_font,
+                fill="#facc15", anchor=tk.NE, tags=(hint_tag,))
+            self.canvas.tag_bind(hint_tag, "<Button-1>", lambda e: self._on_hint())
+            self._hint_tag          = hint_tag
+            self._hint_used_display = False
 
-        # ── Start countdown for hard ───────────────────────────────────────────
+        # ── Physical keyboard binding ─────────────────────────────────────────
+        self.master.bind("<Key>", self._on_key_press)
+
+        # ── Hard mode timer ───────────────────────────────────────────────────
         if cfg["timer_seconds"]:
             self._start_countdown(cfg["timer_seconds"])
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # GAME ACTIONS
-    # ═══════════════════════════════════════════════════════════════════════════
-    def _on_guess(self):
-        guess = self.entry.get().strip().upper()
-        self.entry.delete(0, tk.END)
+    # ── Word letter boxes ─────────────────────────────────────────────────────
+    def _build_word_display(self, start_x: int, y: int, theme: dict):
+        word         = self.game.word
+        box_w, box_h = 44, 50
+        gap          = 6
+        total_w      = len(word) * (box_w + gap) - gap
+        panel_w      = CW - start_x
+        ox           = start_x + (panel_w - total_w) // 2
 
-        if not guess or len(guess) != 1 or not guess.isalpha():
-            self._set_feedback("⚠ Enter a single letter.", "#f87171")
+        self._letter_boxes = []
+        for i, letter in enumerate(word):
+            x0 = ox + i * (box_w + gap)
+            x1 = x0 + box_w
+            y0 = y
+            y1 = y + box_h
+            rect = self.canvas.create_rectangle(
+                x0, y0, x1, y1,
+                fill="#1a1a2e", outline=theme["accent"], width=2)
+            txt = self.canvas.create_text(
+                (x0 + x1) // 2, (y0 + y1) // 2,
+                text="", font=self.word_font, fill=theme["accent"])
+            self._letter_boxes.append((rect, txt, letter))
+
+    # ── Keyboard ──────────────────────────────────────────────────────────────
+    def _build_keyboard(self, kb_y: int, theme: dict):
+        kb_x = 10
+        if self.loader.kb_photo:
+            self.canvas.create_image(kb_x, kb_y, anchor=tk.NW,
+                                     image=self.loader.kb_photo)
+            self._photo_refs.append(self.loader.kb_photo)
+
+        kw, kh     = self.loader.kb_size
+        rows       = QWERTY
+        max_keys   = max(len(r) for r in rows)
+        key_w      = kw / max_keys
+        key_h      = kh / len(rows)
+        row_offsets = [0, key_w * 0.5, key_w * 1.5]
+
+        self._key_regions: dict[str, tuple] = {}
+        for ri, row in enumerate(rows):
+            for ci, letter in enumerate(row):
+                rx0 = kb_x + row_offsets[ri] + ci * key_w
+                ry0 = kb_y + ri * key_h
+                rx1 = rx0 + key_w
+                ry1 = ry0 + key_h
+                self._key_regions[letter] = (rx0, ry0, rx1, ry1)
+
+        self.canvas.bind("<Button-1>", self._on_canvas_click)
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # INPUT HANDLERS
+    # ═════════════════════════════════════════════════════════════════════════
+    def _on_canvas_click(self, event):
+        for letter, (x0, y0, x1, y1) in self._key_regions.items():
+            if x0 <= event.x <= x1 and y0 <= event.y <= y1:
+                self._process_guess(letter)
+                return
+
+    def _on_key_press(self, event):
+        key = event.char.upper()
+        if key.isalpha() and len(key) == 1:
+            self._process_guess(key)
+
+    def _process_guess(self, letter: str):
+        if self.game.get_status() != "ongoing":
             return
 
-        result = self.game.guess(guess)
+        result = self.game.guess(letter)
         self._refresh_display()
 
         if result == "already":
-            self._set_feedback(f"'{guess}' was already guessed.", "#aaa")
+            self._set_feedback(f"'{letter}' was already guessed.", "#aaa")
         elif result == "wrong":
-            self._set_feedback(f"✗  '{guess}' is not in the word!", "#f87171")
+            self._set_feedback(f"✗  '{letter}' is not in the word!", "#f87171")
+            self._mark_key_used(letter)
         else:
-            self._set_feedback(f"✓  '{guess}' is correct!", "#4ade80")
+            self._set_feedback(f"✓  '{letter}' is correct!", "#4ade80")
+            self._mark_key_used(letter)
 
         self._check_end()
 
@@ -397,19 +480,34 @@ class HangmanApp:
             self._start_countdown(cfg["timer_seconds"])
 
     def _on_hint(self):
+        if getattr(self, "_hint_used_display", False):
+            return
         letter = self.game.use_hint()
         if letter:
             self._set_feedback(f"💡 Hint: '{letter}' has been revealed!", "#facc15")
             self._refresh_display()
-            if hasattr(self, "hint_btn"):
-                self.hint_btn.config(state=tk.DISABLED, fg="#555")
+            self._mark_key_used(letter)
+            self._hint_used_display = True
+            try:
+                self.canvas.itemconfig(self._hint_tag, fill="#555")
+            except Exception:
+                pass
             self._check_end()
         else:
             self._set_feedback("No hints available.", "#aaa")
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # TIMER (hard mode only)
-    # ═══════════════════════════════════════════════════════════════════════════
+    def _mark_key_used(self, letter: str):
+        region = self._key_regions.get(letter)
+        if not region:
+            return
+        x0, y0, x1, y1 = region
+        self.canvas.create_rectangle(
+            x0 + 2, y0 + 2, x1 - 2, y1 - 2,
+            fill="#222222", outline="", stipple="gray50")
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # TIMER
+    # ═════════════════════════════════════════════════════════════════════════
     def _start_countdown(self, seconds: int):
         self._remaining_time = seconds
         self._tick()
@@ -427,13 +525,11 @@ class HangmanApp:
 
         color = "#f87171" if self._remaining_time <= 10 else "#facc15"
         try:
-            self.canvas.itemconfig(
-                self.timer_text,
-                text=f"⏱ {self._remaining_time}s remaining",
-                fill=color)
+            self.canvas.itemconfig(self.timer_text,
+                                   text=f"⏱ {self._remaining_time}s",
+                                   fill=color)
         except Exception:
             pass
-
         self._remaining_time -= 1
         self.timer_id = self.master.after(1000, self._tick)
 
@@ -442,20 +538,26 @@ class HangmanApp:
             self.master.after_cancel(self.timer_id)
             self.timer_id = None
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # DISPLAY HELPERS
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
+    # DISPLAY REFRESH
+    # ═════════════════════════════════════════════════════════════════════════
     def _refresh_display(self):
-        # Update word display
-        try:
-            self.canvas.itemconfig(self.word_text,
-                                   text=self.game.get_display_word())
-        except Exception:
-            pass
+        # Letter boxes
+        guessed = self.game.guessed_letters
+        for rect, txt, letter in self._letter_boxes:
+            if letter in guessed:
+                self.canvas.itemconfig(txt, text=letter)
 
-        self._refresh_info_vars()
+        # Hearts
+        remaining   = self.game.remaining_attempts
+        heart_full  = self.loader.buttons.get("heart_full")
+        heart_empty = self.loader.buttons.get("heart_empty")
+        for i, item in enumerate(self.heart_items):
+            img = heart_full if i < remaining else heart_empty
+            if img:
+                self.canvas.itemconfig(item, image=img)
 
-        # Swap sprite frame based on wrong guess count
+        # Sprite
         wrongs = self.game.max_attempts - self.game.remaining_attempts
         if getattr(self, "sprite_frames", None):
             idx = min(wrongs, len(self.sprite_frames) - 1)
@@ -464,19 +566,7 @@ class HangmanApp:
                 self.canvas.itemconfig(self.canvas_sprite,
                                        image=self.current_sprite_photo)
             except Exception:
-                self.canvas_sprite = self.canvas.create_image(
-                    250, 50, anchor=tk.NW, image=self.current_sprite_photo)
-
-    def _refresh_info_vars(self):
-        hearts = ("❤" * self.game.remaining_attempts +
-                  "🖤" * (self.game.max_attempts - self.game.remaining_attempts))
-        attempts_text = f"{hearts}  ({self.game.remaining_attempts} left)"
-        guessed_text  = f"Guessed: {self.game.get_guessed_letters()}"
-        try:
-            self.canvas.itemconfig(self.attempts_text, text=attempts_text)
-            self.canvas.itemconfig(self.guessed_text,  text=guessed_text)
-        except Exception:
-            pass
+                pass
 
     def _set_feedback(self, msg: str, color: str = "#e5e5e5"):
         try:
@@ -484,73 +574,77 @@ class HangmanApp:
         except Exception:
             pass
 
+    # ═════════════════════════════════════════════════════════════════════════
+    # WIN / LOSE
+    # ═════════════════════════════════════════════════════════════════════════
     def _check_end(self):
         status = self.game.get_status()
         if status == "win":
             self._cancel_timer()
-            # Clear timer display
             try:
                 self.canvas.itemconfig(self.timer_text, text="")
             except Exception:
                 pass
             score = self.game.get_score()
-            self._set_feedback(
-                f"🎉 YOU WIN!  Score: {score} pts\nWord was: {self.game.word}",
-                "#4ade80")
-            self._disable_input()
+            self._set_feedback(f"🎉 YOU WIN!  Score: {score} pts", "#4ade80")
+            self._unbind_input()
             self._show_play_again()
 
         elif status == "lose":
             self._cancel_timer()
-            # Clear timer display
             try:
                 self.canvas.itemconfig(self.timer_text, text="")
             except Exception:
                 pass
-            # Show full word on loss
-            try:
-                self.canvas.itemconfig(self.word_text, text=self.game.word)
-            except Exception:
-                pass
+            for rect, txt, letter in self._letter_boxes:
+                self.canvas.itemconfig(txt, text=letter)
             self._set_feedback(
-                f"💀 GAME OVER!  Word was: {self.game.word}",
-                "#f87171")
-            self._disable_input()
+                f"💀 GAME OVER!  Word was: {self.game.word}", "#f87171")
+            self._unbind_input()
             self._show_play_again()
 
-    def _disable_input(self):
-        try:
-            self.entry.config(state=tk.DISABLED)
-        except Exception:
-            pass
+    def _unbind_input(self):
+        self.master.unbind("<Key>")
+        self.canvas.unbind("<Button-1>")
 
     def _show_play_again(self):
         theme = THEME[self.difficulty]
-        frame = tk.Frame(self.master, bg=theme["bg"])
-        frame.pack(pady=6)
+        again_tag = "again_btn"
+        menu_tag  = "end_menu_btn"
 
-        tk.Button(frame, text="▶ Play Again", font=self.body_font,
-                  relief=tk.FLAT, bg=theme["btn"], fg="#fff",
-                  cursor="hand2",
-                  command=lambda: self._start_game(self.difficulty)
-                  ).pack(side=tk.LEFT, padx=6)
+        self.canvas.create_rectangle(
+            CW//2 - 130, CH - 50, CW//2 - 10, CH - 20,
+            fill=theme["btn"], outline="")
+        self.canvas.create_text(
+            CW//2 - 70, CH - 35,
+            text="▶ Play Again", font=self.body_font,
+            fill="#fff", tags=(again_tag,))
+        self.canvas.tag_bind(again_tag, "<Button-1>",
+                             lambda e: self._start_game(self.difficulty))
 
-        tk.Button(frame, text="↩ Menu", font=self.body_font,
-                  relief=tk.FLAT, bg="#333", fg="#ccc",
-                  cursor="hand2",
-                  command=self._show_main_menu
-                  ).pack(side=tk.LEFT, padx=6)
+        self.canvas.create_rectangle(
+            CW//2 + 10, CH - 50, CW//2 + 130, CH - 20,
+            fill="#333", outline="")
+        self.canvas.create_text(
+            CW//2 + 70, CH - 35,
+            text="↩ Menu", font=self.body_font,
+            fill="#ccc", tags=(menu_tag,))
+        self.canvas.tag_bind(menu_tag, "<Button-1>",
+                             lambda e: self._show_main_menu())
 
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     # UTILS
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ═════════════════════════════════════════════════════════════════════════
     def _clear(self):
         self._photo_refs.clear()
+        self.master.unbind("<Key>")
         for w in self.master.winfo_children():
             w.destroy()
 
     def _center_window(self, w: int, h: int):
         self.master.update_idletasks()
-        x = (self.master.winfo_screenwidth()  // 2) - (w // 2)
-        y = (self.master.winfo_screenheight() // 2) - (h // 2)
+        sw = self.master.winfo_screenwidth()
+        sh = self.master.winfo_screenheight()
+        x  = (sw // 2) - (w // 2)
+        y  = (sh // 2) - (h // 2)
         self.master.geometry(f"{w}x{h}+{x}+{y}")
