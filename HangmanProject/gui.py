@@ -107,7 +107,7 @@ class SpriteLoader:
 
     # ── Keyboard images ───────────────────────────────────────────────────────
     def _load_keyboard(self):
-        kb_w = CW - 20
+        kb_w = CW - 200
         for key, fname in [("kb_normal", "keyboard_normal.png"),
                             ("kb_used",   "keyboard_key_used.png")]:
             path = os.path.join(self.assets_dir, fname)
@@ -116,7 +116,13 @@ class SpriteLoader:
                 ow, oh = img.size
                 ratio  = kb_w / ow
                 kb_h   = int(oh * ratio)
-                self.buttons[key] = img.resize((kb_w, kb_h), Image.LANCZOS)
+                img    = img.resize((kb_w, kb_h), Image.LANCZOS)
+
+                # ── Fix: composite onto transparent base to kill checkerboard ──
+                base = Image.new("RGBA", (kb_w, kb_h), (0, 0, 0, 0))
+                img  = Image.alpha_composite(base, img)
+
+                self.buttons[key] = img
             except Exception:
                 self.buttons[key] = None
 
@@ -201,13 +207,13 @@ class HangmanApp:
             canvas.create_image(400, 110, anchor=tk.CENTER, image=title)
             self._photo_refs.append(title)
         else:
-            canvas.create_text(400, 110, text="REGULAR HANGMAN",
+            canvas.create_text(400, 110, text="REGULAR GAME",
                                font=self.title_font, fill=BASE_TEXT)
 
         btn_data = [
             ("New_Game",          300, lambda: self._start_game(self.difficulty)),
             ("Change_Difficulty", 390, self._show_difficulty_screen),
-            ("Exit_Game",         500, self.master.quit),
+            ("Exit_Game",         490, self.master.quit),
         ]
         for key, y, cmd in btn_data:
             photo = self.loader.get_button(key, width=280)
@@ -315,7 +321,7 @@ class HangmanApp:
         CHAR_Y     = KB_Y - TARGET_SIZES[self.difficulty][1] + 20
         HEART_Y    = 12
         WORD_Y     = 90
-        RIGHT_X    = TARGET_SIZES[self.difficulty][0] + 20
+        RIGHT_X    = 510
         FEEDBACK_Y = WORD_Y + 110
 
         # ── Character sprite (left side) ──────────────────────────────────────
@@ -396,13 +402,39 @@ class HangmanApp:
     # ── Word letter boxes ─────────────────────────────────────────────────────
     def _build_word_display(self, start_x: int, y: int, theme: dict):
         word         = self.game.word
-        box_w, box_h = 44, 50
-        gap          = 6
-        total_w      = len(word) * (box_w + gap) - gap
-        panel_w      = CW - start_x
-        ox           = start_x + (panel_w - total_w) // 2
+        panel_w      = CW - start_x - 10
 
-        self._letter_boxes = []
+        # Scale box size down for longer words so they always fit
+        if len(word) <= 5:
+            box_w, box_h = 44, 50
+            gap          = 6
+        elif len(word) <= 8:
+            box_w, box_h = 36, 44
+            gap          = 5
+        elif len(word) <= 12:
+            box_w, box_h = 28, 36
+            gap          = 4
+        else:
+            box_w, box_h = 22, 30
+            gap          = 3
+
+        total_w = len(word) * (box_w + gap) - gap
+
+        # If still too wide, force fit
+        if total_w > panel_w:
+            box_w = (panel_w - (len(word) - 1) * gap) // len(word)
+            box_h = int(box_w * 1.1)
+            total_w = len(word) * (box_w + gap) - gap
+
+        # Center in right panel
+        ox = start_x + (panel_w - total_w) // 2
+
+        self._letter_boxes  = []
+        self._box_font = tkfont.Font(
+            family="Courier New",
+            size=max(8, box_h // 3),
+            weight="bold")
+
         for i, letter in enumerate(word):
             x0 = ox + i * (box_w + gap)
             x1 = x0 + box_w
@@ -413,12 +445,12 @@ class HangmanApp:
                 fill="#1a1a2e", outline=theme["accent"], width=2)
             txt = self.canvas.create_text(
                 (x0 + x1) // 2, (y0 + y1) // 2,
-                text="", font=self.word_font, fill=theme["accent"])
+                text="", font=self._box_font,
+                fill=theme["accent"])
             self._letter_boxes.append((rect, txt, letter))
-
     # ── Keyboard ──────────────────────────────────────────────────────────────
     def _build_keyboard(self, kb_y: int, theme: dict):
-        kb_x = 10
+        kb_x = (CW - self.loader.kb_size[0]) // 2
         if self.loader.kb_photo:
             self.canvas.create_image(kb_x, kb_y, anchor=tk.NW,
                                      image=self.loader.kb_photo)
@@ -427,11 +459,17 @@ class HangmanApp:
         kw, kh     = self.loader.kb_size
         rows       = QWERTY
         max_keys   = max(len(r) for r in rows)
-        key_w      = kw / max_keys
-        key_h      = kh / len(rows)
+
+        # Each key is square — calculate from image width / max keys in a row
+        key_w = kw / max_keys
+        key_h = kh / len(rows)
+
+        # QWERTY row indent — row 2 indented 0.5 key, row 3 indented 1.5 keys
         row_offsets = [0, key_w * 0.5, key_w * 1.5]
 
         self._key_regions: dict[str, tuple] = {}
+        self._kb_x = kb_x  # store kb_x so overlay uses same origin
+
         for ri, row in enumerate(rows):
             for ci, letter in enumerate(row):
                 rx0 = kb_x + row_offsets[ri] + ci * key_w
@@ -609,26 +647,59 @@ class HangmanApp:
 
     def _show_play_again(self):
         theme = THEME[self.difficulty]
-        again_tag = "again_btn"
-        menu_tag  = "end_menu_btn"
 
+        # Semi-transparent dark overlay over whole canvas
         self.canvas.create_rectangle(
-            CW//2 - 130, CH - 50, CW//2 - 10, CH - 20,
+            0, 0, CW, CH,
+            fill="#000000", stipple="gray50", outline="")
+
+        # Popup box — dead center
+        pw, ph = 400, 200
+        px = (CW - pw) // 2
+        py = (CH - ph) // 2
+
+        # Popup background
+        self.canvas.create_rectangle(
+            px, py, px + pw, py + ph,
+            fill="#1a1a2e", outline=theme["accent"], width=3)
+
+        # Status message already shown via feedback — add word reveal
+        status = self.game.get_status()
+        msg    = "🎉 YOU WIN!" if status == "win" else "💀 GAME OVER"
+        color  = "#4ade80"    if status == "win" else "#f87171"
+
+        self.canvas.create_text(
+            CW // 2, py + 45,
+            text=msg, font=self.title_font,
+            fill=color, anchor=tk.CENTER)
+
+        self.canvas.create_text(
+            CW // 2, py + 85,
+            text=f"Word: {self.game.word}",
+            font=self.body_font, fill=BASE_TEXT,
+            anchor=tk.CENTER)
+
+        # Play Again button
+        again_tag = "again_btn"
+        self.canvas.create_rectangle(
+            px + 20, py + 130, px + 175, py + 170,
             fill=theme["btn"], outline="")
         self.canvas.create_text(
-            CW//2 - 70, CH - 35,
+            px + 97, py + 150,
             text="▶ Play Again", font=self.body_font,
-            fill="#fff", tags=(again_tag,))
+            fill="#fff", tags=(again_tag,), anchor=tk.CENTER)
         self.canvas.tag_bind(again_tag, "<Button-1>",
                              lambda e: self._start_game(self.difficulty))
 
+        # Menu button
+        menu_tag = "end_menu_btn"
         self.canvas.create_rectangle(
-            CW//2 + 10, CH - 50, CW//2 + 130, CH - 20,
+            px + 225, py + 130, px + 380, py + 170,
             fill="#333", outline="")
         self.canvas.create_text(
-            CW//2 + 70, CH - 35,
+            px + 302, py + 150,
             text="↩ Menu", font=self.body_font,
-            fill="#ccc", tags=(menu_tag,))
+            fill="#ccc", tags=(menu_tag,), anchor=tk.CENTER)
         self.canvas.tag_bind(menu_tag, "<Button-1>",
                              lambda e: self._show_main_menu())
 
