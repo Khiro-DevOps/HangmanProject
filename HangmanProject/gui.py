@@ -98,14 +98,26 @@ class SpriteLoader:
         data = img.getdata()
         new_data = []
         for r, g, b, a in data:
-            if (r < threshold and g < threshold and b < threshold) or \
-               (r > 240 and g > 240 and b > 240):
+            # 1. Check if the pixel is already transparent
+            if a == 0:
                 new_data.append((0, 0, 0, 0))
+                continue
+                
+            # 2. Check for near-black or near-white backgrounds
+            is_black_or_white = (r < threshold and g < threshold and b < threshold) or \
+                                (r > 240 and g > 240 and b > 240)
+            
+            # 3. NEW: Check for fake checkerboard colors (typically pure gray #808080 or light gray #c0c0c0)
+            # This catches the specific gray-and-white grids common in fake transparent web images.
+            is_checker_gray = (abs(r - g) < 5 and abs(g - b) < 5 and abs(r - b) < 5) and (115 < r < 205)
+
+            if is_black_or_white or is_checker_gray:
+                new_data.append((0, 0, 0, 0)) # Zap it to completely transparent
             else:
                 new_data.append((r, g, b, a))
+                
         img.putdata(new_data)
         return img
-
     # ── Button PNGs ───────────────────────────────────────────────────────────
     def _load_buttons(self):
         for fname in self._button_files:
