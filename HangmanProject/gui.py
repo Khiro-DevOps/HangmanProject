@@ -68,9 +68,11 @@ class SpriteLoader:
     def _load_bg(self):
         path = os.path.join(self.assets_dir, "housebg.jpg")
         try:
-            img = Image.open(path).convert("RGBA")
-            self.bg_photo = ImageTk.PhotoImage(img.resize((CW, CH), Image.LANCZOS))
+            # Keep the raw PIL image so we can resize it on the fly later
+            self.bg_image_raw = Image.open(path).convert("RGBA")
+            self.bg_photo = ImageTk.PhotoImage(self.bg_image_raw.resize((CW, CH), Image.LANCZOS))
         except Exception:
+            self.bg_image_raw = None
             self.bg_photo = None
 
     # ── Sprite sheets ─────────────────────────────────────────────────────────
@@ -194,10 +196,18 @@ class HangmanApp:
 
         self.master.geometry(f"{CW}x{CH}")
         self._center_window(CW, CH)
+        
         self.is_fullscreen = False
+        
+        # --- Add this background tracking variable ---
+        self.bg_label = None
+        self._bg_photo_full = None
+        
         self.master.bind("<F11>", self._toggle_fullscreen)
         self.master.bind("<Escape>", self._exit_fullscreen)
-
+        
+        # --- Bind the resize event ---
+        self.master.bind("<Configure>", self._on_window_resize)
         self.title_font = tkfont.Font(family="Courier New", size=20, weight="bold")
         self.word_font  = tkfont.Font(family="Courier New", size=18, weight="bold")
         self.body_font  = tkfont.Font(family="Courier New", size=11)
@@ -223,11 +233,6 @@ class HangmanApp:
         canvas = tk.Canvas(self.master, width=CW, height=CH,
                            bg=BASE_BG, highlightthickness=0)
         canvas.pack(expand=True)
-
-        # Background
-        if self.loader.bg_photo:
-            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_photo)
-            self._photo_refs.append(self.loader.bg_photo)
 
         # Title
         title = self.loader.get_button("Regular_Game", width=520)
@@ -268,11 +273,6 @@ class HangmanApp:
         canvas = tk.Canvas(self.master, width=CW, height=CH,
                            bg=BASE_BG, highlightthickness=0)
         canvas.pack(expand=True)
-
-        # Background
-        if self.loader.bg_photo:
-            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_photo)
-            self._photo_refs.append(self.loader.bg_photo)
 
         # Header
         hdr = self.loader.get_button("Change_Difficulty", width=440)
@@ -336,13 +336,8 @@ class HangmanApp:
         self.master.configure(bg=theme["bg"])
 
         self.canvas = tk.Canvas(self.master, width=CW, height=CH,
-                                bg=theme["bg"], highlightthickness=0)
+                        bg=theme["bg"], highlightthickness=0)
         self.canvas.pack(expand=True)
-
-        # Background
-        if self.loader.bg_photo:
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_photo)
-            self._photo_refs.append(self.loader.bg_photo)
 
         # ── Layout constants ──────────────────────────────────────────────────
         KB_H       = self.loader.kb_size[1]
@@ -749,3 +744,26 @@ class HangmanApp:
             self.is_fullscreen = False
             self.master.attributes("-fullscreen", False)
         return "break"
+    
+    def _on_window_resize(self, event):
+        # Only trigger if the main window itself changes size
+        if event.widget != self.master:
+            return
+            
+        # Get the new dimensions of the window
+        ww = event.width
+        wh = event.height
+        
+        # If the background raw image exists, scale it edge-to-edge
+        if hasattr(self.loader, 'bg_image_raw') and self.loader.bg_image_raw:
+            resized_img = self.loader.bg_image_raw.resize((ww, wh), Image.LANCZOS)
+            self._bg_photo_full = ImageTk.PhotoImage(resized_img)
+            
+            if self.bg_label is None:
+                # Place a background label behind all game canvases
+                self.bg_label = tk.Label(self.master, image=self._bg_photo_full, bg=BASE_BG)
+                self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+                # Lower it to the bottom stack so canvases render on top
+                self.bg_label.lower()
+            else:
+                self.bg_label.configure(image=self._bg_photo_full)
