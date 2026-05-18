@@ -12,15 +12,15 @@ QWERTY = [
     list("ZXCVBNM"),
 ]
 
-# ── Per-character display sizes (preserves aspect ratio at same height) ────────
+# ── Per-character display sizes ────────────────────────────────────────────────
 TARGET_SIZES = {
     "easy":   (366, 352),
     "medium": (489, 352),
     "hard":   (472, 352),
 }
 
-# ── Canvas dimensions ─────────────────────────────────────────────────────────
-CW, CH = 900, 650   # canvas width, height
+# ── Unified canvas dimensions (all screens) ───────────────────────────────────
+CW, CH = 900, 650
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 THEME = {
@@ -38,8 +38,7 @@ BASE_TEXT = "#e5e5e5"
 class SpriteLoader:
     def __init__(self, assets_dir: str):
         self.assets_dir = assets_dir
-        self.bg_menu    = None
-        self.bg_game    = None
+        self.bg_photo   = None
         self.frames     = {"easy": [], "medium": [], "hard": []}
         self.buttons    = {}
 
@@ -65,16 +64,14 @@ class SpriteLoader:
         self._load_keyboard()
         self._load_hearts()
 
-    # ── Background ────────────────────────────────────────────────────────────
+    # ── Background — single size for all screens ──────────────────────────────
     def _load_bg(self):
         path = os.path.join(self.assets_dir, "housebg.jpg")
         try:
             img = Image.open(path).convert("RGBA")
-            self.bg_menu = ImageTk.PhotoImage(img.resize((800, 600), Image.LANCZOS))
-            self.bg_game = ImageTk.PhotoImage(img.resize((CW, CH),   Image.LANCZOS))
+            self.bg_photo = ImageTk.PhotoImage(img.resize((CW, CH), Image.LANCZOS))
         except Exception:
-            self.bg_menu = None
-            self.bg_game = None
+            self.bg_photo = None
 
     # ── Sprite sheets ─────────────────────────────────────────────────────────
     def _load_sheets(self):
@@ -95,13 +92,28 @@ class SpriteLoader:
                 placeholder = Image.new("RGBA", (tw, th), (50, 50, 50, 180))
                 self.frames[diff] = [ImageTk.PhotoImage(placeholder) for _ in range(count)]
 
+    # ── Remove near-black or near-white backgrounds ───────────────────────────
+    def _remove_bg(self, img: Image.Image, threshold: int = 30) -> Image.Image:
+        img  = img.convert("RGBA")
+        data = img.getdata()
+        new_data = []
+        for r, g, b, a in data:
+            if (r < threshold and g < threshold and b < threshold) or \
+               (r > 240 and g > 240 and b > 240):
+                new_data.append((0, 0, 0, 0))
+            else:
+                new_data.append((r, g, b, a))
+        img.putdata(new_data)
+        return img
+
     # ── Button PNGs ───────────────────────────────────────────────────────────
     def _load_buttons(self):
         for fname in self._button_files:
             key  = fname.replace(".png", "")
             path = os.path.join(self.assets_dir, fname)
             try:
-                self.buttons[key] = Image.open(path).convert("RGBA")
+                img = self._remove_bg(Image.open(path))
+                self.buttons[key] = img
             except Exception:
                 self.buttons[key] = None
 
@@ -112,16 +124,13 @@ class SpriteLoader:
                             ("kb_used",   "keyboard_key_used.png")]:
             path = os.path.join(self.assets_dir, fname)
             try:
-                img    = Image.open(path).convert("RGBA")
+                img    = self._remove_bg(Image.open(path))
                 ow, oh = img.size
                 ratio  = kb_w / ow
                 kb_h   = int(oh * ratio)
                 img    = img.resize((kb_w, kb_h), Image.LANCZOS)
-
-                # ── Fix: composite onto transparent base to kill checkerboard ──
-                base = Image.new("RGBA", (kb_w, kb_h), (0, 0, 0, 0))
-                img  = Image.alpha_composite(base, img)
-
+                base   = Image.new("RGBA", (kb_w, kb_h), (0, 0, 0, 0))
+                img    = Image.alpha_composite(base, img)
                 self.buttons[key] = img
             except Exception:
                 self.buttons[key] = None
@@ -137,7 +146,8 @@ class SpriteLoader:
                             ("heart_empty", "heart_empty.png")]:
             path = os.path.join(self.assets_dir, fname)
             try:
-                img = Image.open(path).convert("RGBA").resize(HEART_SIZE, Image.LANCZOS)
+                img = self._remove_bg(Image.open(path))
+                img = img.resize(HEART_SIZE, Image.LANCZOS)
                 self.buttons[key] = ImageTk.PhotoImage(img)
             except Exception:
                 self.buttons[key] = None
@@ -167,8 +177,14 @@ class HangmanApp:
     def __init__(self, master: tk.Tk) -> None:
         self.master = master
         self.master.title("Regular Hangman")
-        self.master.resizable(False, False)
+        self.master.resizable(True, True)
         self.master.configure(bg=BASE_BG)
+
+        self.master.geometry(f"{CW}x{CH}")
+        self._center_window(CW, CH)
+        self.is_fullscreen = False
+        self.master.bind("<F11>", self._toggle_fullscreen)
+        self.master.bind("<Escape>", self._exit_fullscreen)
 
         self.title_font = tkfont.Font(family="Courier New", size=20, weight="bold")
         self.word_font  = tkfont.Font(family="Courier New", size=18, weight="bold")
@@ -191,41 +207,42 @@ class HangmanApp:
     def _show_main_menu(self):
         self._cancel_timer()
         self._clear()
-        self.master.geometry("800x600")
-        self._center_window(800, 600)
 
-        canvas = tk.Canvas(self.master, width=800, height=600,
+        canvas = tk.Canvas(self.master, width=CW, height=CH,
                            bg=BASE_BG, highlightthickness=0)
-        canvas.pack()
+        canvas.pack(expand=True)
 
-        if self.loader.bg_menu:
-            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_menu)
-            self._photo_refs.append(self.loader.bg_menu)
+        # Background
+        if self.loader.bg_photo:
+            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_photo)
+            self._photo_refs.append(self.loader.bg_photo)
 
-        title = self.loader.get_button("Regular_Game", width=500)
+        # Title
+        title = self.loader.get_button("Regular_Game", width=520)
         if title:
-            canvas.create_image(400, 110, anchor=tk.CENTER, image=title)
+            canvas.create_image(CW // 2, 130, anchor=tk.CENTER, image=title)
             self._photo_refs.append(title)
         else:
-            canvas.create_text(400, 110, text="REGULAR GAME",
+            canvas.create_text(CW // 2, 130, text="REGULAR HANGMAN",
                                font=self.title_font, fill=BASE_TEXT)
 
+        # Buttons
         btn_data = [
-            ("New_Game",          300, lambda: self._start_game(self.difficulty)),
-            ("Change_Difficulty", 390, self._show_difficulty_screen),
-            ("Exit_Game",         490, self.master.quit),
+            ("New_Game",          320, lambda: self._start_game(self.difficulty)),
+            ("Change_Difficulty", 420, self._show_difficulty_screen),
+            ("Exit_Game",         520, self.master.quit),
         ]
         for key, y, cmd in btn_data:
-            photo = self.loader.get_button(key, width=280)
+            photo = self.loader.get_button(key, width=300)
             if photo:
                 lbl = tk.Label(canvas, image=photo, bg="#0f0f0f",
                                cursor="hand2", borderwidth=0, highlightthickness=0)
                 lbl.image = photo
                 lbl.bind("<Button-1>", lambda e, c=cmd: c())
-                canvas.create_window(400, y, window=lbl)
+                canvas.create_window(CW // 2, y, window=lbl)
             else:
                 tag = f"btn_{key}"
-                canvas.create_text(400, y, text=key.replace("_", " ").upper(),
+                canvas.create_text(CW // 2, y, text=key.replace("_", " ").upper(),
                                    font=self.body_font, fill=BASE_TEXT, tags=(tag,))
                 canvas.tag_bind(tag, "<Button-1>", lambda e, c=cmd: c())
 
@@ -235,53 +252,55 @@ class HangmanApp:
     def _show_difficulty_screen(self):
         self._cancel_timer()
         self._clear()
-        self.master.geometry("800x600")
-        self._center_window(800, 600)
 
-        canvas = tk.Canvas(self.master, width=800, height=600,
+        canvas = tk.Canvas(self.master, width=CW, height=CH,
                            bg=BASE_BG, highlightthickness=0)
-        canvas.pack()
+        canvas.pack(expand=True)
 
-        if self.loader.bg_menu:
-            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_menu)
-            self._photo_refs.append(self.loader.bg_menu)
+        # Background
+        if self.loader.bg_photo:
+            canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_photo)
+            self._photo_refs.append(self.loader.bg_photo)
 
-        hdr = self.loader.get_button("Change_Difficulty", width=420)
+        # Header
+        hdr = self.loader.get_button("Change_Difficulty", width=440)
         if hdr:
-            canvas.create_image(400, 100, anchor=tk.CENTER, image=hdr)
+            canvas.create_image(CW // 2, 120, anchor=tk.CENTER, image=hdr)
             self._photo_refs.append(hdr)
         else:
-            canvas.create_text(400, 100, text="CHANGE DIFFICULTY",
+            canvas.create_text(CW // 2, 120, text="CHANGE DIFFICULTY",
                                font=self.title_font, fill=BASE_TEXT)
 
+        # Difficulty buttons
         diff_data = [
-            ("Easy",   "easy",   240),
-            ("Medium", "medium", 360),
-            ("Hard",   "hard",   470),
+            ("Easy",   "easy",   260),
+            ("Medium", "medium", 380),
+            ("Hard",   "hard",   490),
         ]
         for key, diff, y in diff_data:
-            photo = self.loader.get_button(key, width=220)
+            photo = self.loader.get_button(key, width=240)
             if photo:
                 lbl = tk.Label(canvas, image=photo, bg="#0f0f0f",
                                cursor="hand2", borderwidth=0, highlightthickness=0)
                 lbl.image = photo
                 lbl.bind("<Button-1>", lambda e, d=diff: self._start_game(d))
-                canvas.create_window(400, y, window=lbl)
+                canvas.create_window(CW // 2, y, window=lbl)
             else:
                 tag = f"diff_{key}"
-                canvas.create_text(400, y, text=key.upper(),
+                canvas.create_text(CW // 2, y, text=key.upper(),
                                    font=self.body_font, fill=BASE_TEXT, tags=(tag,))
                 canvas.tag_bind(tag, "<Button-1>", lambda e, d=diff: self._start_game(d))
 
-        back = self.loader.get_button("Back", width=130)
+        # Back button
+        back = self.loader.get_button("Back", width=140)
         if back:
             lbl = tk.Label(canvas, image=back, bg="#0f0f0f",
                            cursor="hand2", borderwidth=0, highlightthickness=0)
             lbl.image = back
             lbl.bind("<Button-1>", lambda e: self._show_main_menu())
-            canvas.create_window(80, 560, window=lbl)
+            canvas.create_window(90, CH - 60, window=lbl)
         else:
-            canvas.create_text(80, 560, text="← BACK",
+            canvas.create_text(90, CH - 60, text="← BACK",
                                font=self.small_font, fill="#aaa", tags=("back",))
             canvas.tag_bind("back", "<Button-1>", lambda e: self._show_main_menu())
 
@@ -302,27 +321,25 @@ class HangmanApp:
         theme = THEME[self.difficulty]
         cfg   = get_config(self.difficulty)
 
-        self.master.geometry(f"{CW}x{CH}")
-        self._center_window(CW, CH)
         self.master.configure(bg=theme["bg"])
 
         self.canvas = tk.Canvas(self.master, width=CW, height=CH,
                                 bg=theme["bg"], highlightthickness=0)
-        self.canvas.pack()
+        self.canvas.pack(expand=True)
 
         # Background
-        if self.loader.bg_game:
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_game)
-            self._photo_refs.append(self.loader.bg_game)
+        if self.loader.bg_photo:
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.loader.bg_photo)
+            self._photo_refs.append(self.loader.bg_photo)
 
         # ── Layout constants ──────────────────────────────────────────────────
         KB_H       = self.loader.kb_size[1]
         KB_Y       = CH - KB_H - 10
         CHAR_Y     = KB_Y - TARGET_SIZES[self.difficulty][1] + 20
         HEART_Y    = 12
-        WORD_Y     = 90
+        WORD_Y     = 140
         RIGHT_X    = 510
-        FEEDBACK_Y = WORD_Y + 110
+        FEEDBACK_Y = WORD_Y + 120
 
         # ── Character sprite (left side) ──────────────────────────────────────
         self.sprite_frames = self.loader.get_frames(self.difficulty)
@@ -353,7 +370,8 @@ class HangmanApp:
         menu_tag = "menu_btn"
         self.canvas.create_text(
             CW - 10, 34, text="↩ Menu",
-            font=self.small_font, fill="#aaa", anchor=tk.NE, tags=(menu_tag,))
+            font=self.small_font, fill="#aaa",
+            anchor=tk.NE, tags=(menu_tag,))
         self.canvas.tag_bind(menu_tag, "<Button-1>",
                              lambda e: self._show_main_menu())
 
@@ -368,7 +386,7 @@ class HangmanApp:
             CW - 10, 72, text="",
             font=self.body_font, fill="#f87171", anchor=tk.NE)
 
-        # ── Word letter boxes (right panel) ───────────────────────────────────
+        # ── Word letter boxes ─────────────────────────────────────────────────
         self._build_word_display(RIGHT_X, WORD_Y, theme)
 
         # ── Feedback text ─────────────────────────────────────────────────────
@@ -401,35 +419,29 @@ class HangmanApp:
 
     # ── Word letter boxes ─────────────────────────────────────────────────────
     def _build_word_display(self, start_x: int, y: int, theme: dict):
-        word         = self.game.word
-        panel_w      = CW - start_x - 10
+        word    = self.game.word
+        panel_w = CW - start_x - 10
 
-        # Scale box size down for longer words so they always fit
         if len(word) <= 5:
-            box_w, box_h = 44, 50
-            gap          = 6
+            box_w, box_h, gap = 44, 50, 6
         elif len(word) <= 8:
-            box_w, box_h = 36, 44
-            gap          = 5
+            box_w, box_h, gap = 36, 44, 5
         elif len(word) <= 12:
-            box_w, box_h = 28, 36
-            gap          = 4
+            box_w, box_h, gap = 28, 36, 4
         else:
-            box_w, box_h = 22, 30
-            gap          = 3
+            box_w, box_h, gap = 22, 30, 3
 
         total_w = len(word) * (box_w + gap) - gap
 
-        # If still too wide, force fit
+        # Force fit if still too wide
         if total_w > panel_w:
-            box_w = (panel_w - (len(word) - 1) * gap) // len(word)
-            box_h = int(box_w * 1.1)
+            box_w   = (panel_w - (len(word) - 1) * gap) // len(word)
+            box_h   = int(box_w * 1.1)
             total_w = len(word) * (box_w + gap) - gap
 
-        # Center in right panel
         ox = start_x + (panel_w - total_w) // 2
 
-        self._letter_boxes  = []
+        self._letter_boxes = []
         self._box_font = tkfont.Font(
             family="Courier New",
             size=max(8, box_h // 3),
@@ -448,6 +460,7 @@ class HangmanApp:
                 text="", font=self._box_font,
                 fill=theme["accent"])
             self._letter_boxes.append((rect, txt, letter))
+
     # ── Keyboard ──────────────────────────────────────────────────────────────
     def _build_keyboard(self, kb_y: int, theme: dict):
         kb_x = (CW - self.loader.kb_size[0]) // 2
@@ -456,21 +469,14 @@ class HangmanApp:
                                      image=self.loader.kb_photo)
             self._photo_refs.append(self.loader.kb_photo)
 
-        kw, kh     = self.loader.kb_size
-        rows       = QWERTY
-        max_keys   = max(len(r) for r in rows)
-
-        # Each key is square — calculate from image width / max keys in a row
-        key_w = kw / max_keys
-        key_h = kh / len(rows)
-
-        # QWERTY row indent — row 2 indented 0.5 key, row 3 indented 1.5 keys
+        kw, kh      = self.loader.kb_size
+        max_keys    = max(len(r) for r in QWERTY)
+        key_w       = kw / max_keys
+        key_h       = kh / len(QWERTY)
         row_offsets = [0, key_w * 0.5, key_w * 1.5]
 
         self._key_regions: dict[str, tuple] = {}
-        self._kb_x = kb_x  # store kb_x so overlay uses same origin
-
-        for ri, row in enumerate(rows):
+        for ri, row in enumerate(QWERTY):
             for ci, letter in enumerate(row):
                 rx0 = kb_x + row_offsets[ri] + ci * key_w
                 ry0 = kb_y + ri * key_h
@@ -623,8 +629,6 @@ class HangmanApp:
                 self.canvas.itemconfig(self.timer_text, text="")
             except Exception:
                 pass
-            score = self.game.get_score()
-            self._set_feedback(f"🎉 YOU WIN!  Score: {score} pts", "#4ade80")
             self._unbind_input()
             self._show_play_again()
 
@@ -634,10 +638,9 @@ class HangmanApp:
                 self.canvas.itemconfig(self.timer_text, text="")
             except Exception:
                 pass
+            # Reveal all letters
             for rect, txt, letter in self._letter_boxes:
                 self.canvas.itemconfig(txt, text=letter)
-            self._set_feedback(
-                f"💀 GAME OVER!  Word was: {self.game.word}", "#f87171")
             self._unbind_input()
             self._show_play_again()
 
@@ -646,46 +649,46 @@ class HangmanApp:
         self.canvas.unbind("<Button-1>")
 
     def _show_play_again(self):
-        theme = THEME[self.difficulty]
+        theme  = THEME[self.difficulty]
+        status = self.game.get_status()
+        score  = self.game.get_score()
 
-        # Semi-transparent dark overlay over whole canvas
+        # Dark overlay
         self.canvas.create_rectangle(
             0, 0, CW, CH,
             fill="#000000", stipple="gray50", outline="")
 
         # Popup box — dead center
-        pw, ph = 400, 200
-        px = (CW - pw) // 2
-        py = (CH - ph) // 2
+        pw, ph = 420, 220
+        px     = (CW - pw) // 2
+        py     = (CH - ph) // 2
 
-        # Popup background
         self.canvas.create_rectangle(
             px, py, px + pw, py + ph,
             fill="#1a1a2e", outline=theme["accent"], width=3)
 
-        # Status message already shown via feedback — add word reveal
-        status = self.game.get_status()
-        msg    = "🎉 YOU WIN!" if status == "win" else "💀 GAME OVER"
-        color  = "#4ade80"    if status == "win" else "#f87171"
-
+        # Title
+        msg   = "🎉 YOU WIN!" if status == "win" else "💀 GAME OVER"
+        color = "#4ade80"    if status == "win" else "#f87171"
         self.canvas.create_text(
             CW // 2, py + 45,
             text=msg, font=self.title_font,
             fill=color, anchor=tk.CENTER)
 
+        # Word + score
+        sub = f"Word: {self.game.word}   |   Score: {score} pts"
         self.canvas.create_text(
             CW // 2, py + 85,
-            text=f"Word: {self.game.word}",
-            font=self.body_font, fill=BASE_TEXT,
-            anchor=tk.CENTER)
+            text=sub, font=self.body_font,
+            fill=BASE_TEXT, anchor=tk.CENTER)
 
         # Play Again button
         again_tag = "again_btn"
         self.canvas.create_rectangle(
-            px + 20, py + 130, px + 175, py + 170,
+            px + 20, py + 140, px + 185, py + 185,
             fill=theme["btn"], outline="")
         self.canvas.create_text(
-            px + 97, py + 150,
+            px + 102, py + 162,
             text="▶ Play Again", font=self.body_font,
             fill="#fff", tags=(again_tag,), anchor=tk.CENTER)
         self.canvas.tag_bind(again_tag, "<Button-1>",
@@ -694,10 +697,10 @@ class HangmanApp:
         # Menu button
         menu_tag = "end_menu_btn"
         self.canvas.create_rectangle(
-            px + 225, py + 130, px + 380, py + 170,
+            px + 235, py + 140, px + 400, py + 185,
             fill="#333", outline="")
         self.canvas.create_text(
-            px + 302, py + 150,
+            px + 317, py + 162,
             text="↩ Menu", font=self.body_font,
             fill="#ccc", tags=(menu_tag,), anchor=tk.CENTER)
         self.canvas.tag_bind(menu_tag, "<Button-1>",
@@ -709,6 +712,7 @@ class HangmanApp:
     def _clear(self):
         self._photo_refs.clear()
         self.master.unbind("<Key>")
+        self.master.configure(bg=BASE_BG)
         for w in self.master.winfo_children():
             w.destroy()
 
@@ -719,3 +723,17 @@ class HangmanApp:
         x  = (sw // 2) - (w // 2)
         y  = (sh // 2) - (h // 2)
         self.master.geometry(f"{w}x{h}+{x}+{y}")
+    
+    # ═════════════════════════════════════════════════════════════════════════
+    # FULLSCREEN CONTROLS
+    # ═════════════════════════════════════════════════════════════════════════
+    def _toggle_fullscreen(self, event=None):
+        self.is_fullscreen = not self.is_fullscreen
+        self.master.attributes("-fullscreen", self.is_fullscreen)
+        return "break"  # Prevents the event from propagating further
+
+    def _exit_fullscreen(self, event=None):
+        if self.is_fullscreen:
+            self.is_fullscreen = False
+            self.master.attributes("-fullscreen", False)
+        return "break"
