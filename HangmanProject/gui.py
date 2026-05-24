@@ -5,6 +5,14 @@ from word_bank import get_random_word, get_config
 import os
 from PIL import Image, ImageTk
 
+# Optional audio support using pygame; falls back silently if unavailable
+try:
+    import pygame
+    _PYGAME_OK = True
+except Exception:
+    pygame = None
+    _PYGAME_OK = False
+
 # ── QWERTY layout ─────────────────────────────────────────────────────────────
 QWERTY = [
     list("QWERTYUIOP"),
@@ -184,6 +192,53 @@ class SpriteLoader:
         return self.frames.get(difficulty, [])
 
 
+# Lightweight audio manager — safe no-op when pygame isn't available
+class AudioManager:
+    def __init__(self, assets_dir: str):
+        self.assets_dir = assets_dir
+        self.current = None
+        self.available = False
+        try:
+            if _PYGAME_OK:
+                pygame.mixer.init()
+                self.available = True
+        except Exception:
+            self.available = False
+
+    def _file(self, name: str) -> str:
+        return os.path.join(self.assets_dir, "audio", name)
+
+    def play(self, filename: str, loops: int = -1, fade_ms: int = 0, volume: float = 1.0):
+        if not self.available:
+            return
+        path = self._file(filename)
+        try:
+            # If same track already playing, leave it
+            if self.current == path and pygame.mixer.music.get_busy():
+                return
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.set_volume(max(0.0, min(1.0, volume)))
+            if fade_ms:
+                pygame.mixer.music.play(loops=loops, fade_ms=fade_ms)
+            else:
+                pygame.mixer.music.play(loops=loops)
+            self.current = path
+        except Exception:
+            pass
+
+    def stop(self, fade_ms: int = 0):
+        if not self.available:
+            return
+        try:
+            if fade_ms:
+                pygame.mixer.music.fadeout(fade_ms)
+            else:
+                pygame.mixer.music.stop()
+            self.current = None
+        except Exception:
+            pass
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # APP
 # ═════════════════════════════════════════════════════════════════════════════
@@ -220,6 +275,8 @@ class HangmanApp:
 
         assets_dir = os.path.join(os.path.dirname(__file__), "..", "assets")
         self.loader = SpriteLoader(assets_dir)
+        # Initialize optional audio manager
+        self.audio = AudioManager(assets_dir)
 
         self._show_main_menu()
 
@@ -239,6 +296,11 @@ class HangmanApp:
         )
         canvas.pack(expand=True)
         self._draw_canvas_background(canvas)
+        try:
+            # menu music loops indefinitely
+            self.audio.play("menu.mp3", loops=-1, volume=0.7)
+        except Exception:
+            pass
 
         # Title
         title = self.loader.get_button("Regular_Game", width=520)
@@ -333,6 +395,11 @@ class HangmanApp:
     # ═════════════════════════════════════════════════════════════════════════
     def _start_game(self, difficulty: str):
         self._cancel_timer()
+        try:
+            # stop any menu music before starting the round
+            self.audio.stop(fade_ms=300)
+        except Exception:
+            pass
         self.difficulty = difficulty
         word, category  = get_random_word(difficulty)
         self.game       = HangmanGame(word, difficulty, category)
@@ -356,6 +423,11 @@ class HangmanApp:
         )
         self.canvas.pack(expand=True)
         self._draw_canvas_background(self.canvas)
+        try:
+            # play the long gameplay track once (no loop)
+            self.audio.play("game.mp3", loops=0, volume=0.7)
+        except Exception:
+            pass
 
         # ── Layout constants ──────────────────────────────────────────────────
         KB_H       = self.loader.kb_size[1]
