@@ -386,13 +386,13 @@ class HangmanApp:
                 lbl = tk.Label(canvas, image=photo, bg="#0f0f0f",
                                cursor="hand2", borderwidth=0, highlightthickness=0)
                 lbl.image = photo
-                lbl.bind("<Button-1>", lambda e, d=diff: self._start_game(d))
+                lbl.bind("<Button-1>", lambda e, d=diff: self._change_difficulty(d))
                 canvas.create_window(CW // 2, y, window=lbl)
             else:
                 tag = f"diff_{key}"
                 canvas.create_text(CW // 2, y, text=key.upper(),
                                    font=self.body_font, fill=BASE_TEXT, tags=(tag,))
-                canvas.tag_bind(tag, "<Button-1>", lambda e, d=diff: self._start_game(d))
+                canvas.tag_bind(tag, "<Button-1>", lambda e, d=diff: self._change_difficulty(d))
 
         # Back button
         back = self.loader.get_button("Back", width=140)
@@ -406,6 +406,16 @@ class HangmanApp:
             canvas.create_text(90, CH - 60, text="← BACK",
                                font=self.small_font, fill="#aaa", tags=("back",))
             canvas.tag_bind("back", "<Button-1>", lambda e: self._show_main_menu())
+
+    def _change_difficulty(self, difficulty: str):
+        """Set the selected difficulty without starting a game, then return to main menu."""
+        self.difficulty = difficulty
+        try:
+            print(f"[HangmanApp] difficulty set to {difficulty}")
+        except Exception:
+            pass
+        # Return to main menu so player can press New Game when ready
+        self._show_main_menu()
 
     # ═════════════════════════════════════════════════════════════════════════
     # SCREEN 2 — Game Screen
