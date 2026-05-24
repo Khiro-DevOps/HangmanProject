@@ -202,20 +202,29 @@ class AudioManager:
             if _PYGAME_OK:
                 pygame.mixer.init()
                 self.available = True
+                print('[AudioManager] pygame.mixer initialized:', pygame.mixer.get_init())
         except Exception:
             self.available = False
+            print('[AudioManager] pygame.mixer init failed')
 
     def _file(self, name: str) -> str:
         return os.path.join(self.assets_dir, "audio", name)
 
     def play(self, filename: str, loops: int = -1, fade_ms: int = 0, volume: float = 1.0):
         if not self.available:
+            print(f"[AudioManager] play('{filename}') skipped: audio not available")
             return
         path = self._file(filename)
+        print(f"[AudioManager] play called -> file={path} loops={loops} fade_ms={fade_ms} volume={volume}")
         try:
+            if not os.path.exists(path):
+                print(f"[AudioManager] file not found: {path}")
+                return
             # If same track already playing, leave it
             if self.current == path and pygame.mixer.music.get_busy():
+                print('[AudioManager] same track already playing; skipping')
                 return
+            print('[AudioManager] loading:', path)
             pygame.mixer.music.load(path)
             pygame.mixer.music.set_volume(max(0.0, min(1.0, volume)))
             if fade_ms:
@@ -223,20 +232,28 @@ class AudioManager:
             else:
                 pygame.mixer.music.play(loops=loops)
             self.current = path
+            print('[AudioManager] play started')
         except Exception:
-            pass
+            print('[AudioManager] error during play', flush=True)
+            import traceback
+            traceback.print_exc()
 
     def stop(self, fade_ms: int = 0):
         if not self.available:
+            print('[AudioManager] stop() skipped: audio not available')
             return
         try:
             if fade_ms:
+                print(f"[AudioManager] fading out ({fade_ms}ms)")
                 pygame.mixer.music.fadeout(fade_ms)
             else:
+                print('[AudioManager] stopping music')
                 pygame.mixer.music.stop()
             self.current = None
         except Exception:
-            pass
+            print('[AudioManager] error during stop', flush=True)
+            import traceback
+            traceback.print_exc()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
