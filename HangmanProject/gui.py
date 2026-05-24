@@ -4,6 +4,7 @@ from game_logic import HangmanGame
 from word_bank import get_random_word, get_config
 import os
 from PIL import Image, ImageTk
+import random
 
 # Optional audio support using pygame; falls back silently if unavailable
 try:
@@ -63,6 +64,10 @@ class SpriteLoader:
             "Easy.png",
             "Medium.png",
             "Hard.png",
+            # Optional assets you may provide
+            "Menu.png",
+            "Menu_Btn.png",
+            "menu_btn.png",
             "Back.png",
         ]
 
@@ -487,17 +492,47 @@ class HangmanApp:
             hx += 42
 
         # ── Difficulty badge + Menu button (top right) ────────────────────────
-        self.canvas.create_text(
-            CW - 10, 14, text=f"[ {self.difficulty.upper()} ]",
-            font=self.body_font, fill=theme["accent"], anchor=tk.NE)
+        # Try to show a difficulty badge image (Easy/Medium/Hard) if available
+        diff_key = self.difficulty.capitalize()
+        diff_img = self.loader.get_button(diff_key, width=140)
+        if diff_img:
+            # Place label on the canvas (so it moves/scales with canvas) and keep a ref
+            diff_lbl = tk.Label(self.canvas, image=diff_img, bg=theme["bg"], borderwidth=0)
+            diff_lbl.image = diff_img
+            self._photo_refs.append(diff_img)
+            # compute height for spacing
+            try:
+                diff_h = diff_img.height()
+            except Exception:
+                diff_h = 18
+            self.canvas.create_window(CW - 10, 14, window=diff_lbl, anchor=tk.NE)
+        else:
+            self.canvas.create_text(
+                CW - 10, 14, text=f"[ {self.difficulty.upper()} ]",
+                font=self.body_font, fill=theme["accent"], anchor=tk.NE)
 
-        menu_tag = "menu_btn"
-        self.canvas.create_text(
-            CW - 10, 34, text="↩ Menu",
-            font=self.small_font, fill="#aaa",
-            anchor=tk.NE, tags=(menu_tag,))
-        self.canvas.tag_bind(menu_tag, "<Button-1>",
-                             lambda e: self._show_main_menu())
+        # Menu button: try several common keys (request a reasonable width)
+        menu_img = (self.loader.get_button("Menu", width=120)
+                or self.loader.get_button("menu_btn", width=120)
+                or self.loader.get_button("Menu_Btn", width=120))
+        if menu_img:
+            menu_lbl = tk.Label(self.canvas, image=menu_img, bg=theme["bg"], cursor="hand2", borderwidth=0)
+            menu_lbl.image = menu_img
+            self._photo_refs.append(menu_img)
+            menu_lbl.bind("<Button-1>", lambda e: self._show_main_menu())
+            # place menu below difficulty badge if diff image exists
+            try:
+                menu_y = 14 + (diff_h if 'diff_h' in locals() else 18) + 6
+            except Exception:
+                menu_y = 34
+            self.canvas.create_window(CW - 10, menu_y, window=menu_lbl, anchor=tk.NE)
+        else:
+            menu_tag = "menu_btn"
+            self.canvas.create_text(
+                CW - 10, 34, text="↩ Menu",
+                font=self.small_font, fill="#aaa",
+                anchor=tk.NE, tags=(menu_tag,))
+            self.canvas.tag_bind(menu_tag, "<Button-1>", lambda e: self._show_main_menu())
 
         # ── Category (easy only) ──────────────────────────────────────────────
         if cfg["show_category"]:
@@ -777,58 +812,54 @@ class HangmanApp:
         status = self.game.get_status()
         score  = self.game.get_score()
 
-        # Dark overlay
-        self.canvas.create_rectangle(
-            0, 0, CW, CH,
-            fill="#000000", stipple="gray50", outline="")
+        # Overlay slightly darkened
+        self.canvas.create_rectangle(0, 0, CW, CH, fill="#000000", stipple="gray25", outline="")
 
-        # Popup box — dead center
-        pw, ph = 420, 220
+        # Try to use existing button art for consistency
+        pw, ph = 480, 220
         px     = (CW - pw) // 2
         py     = (CH - ph) // 2
 
-        self.canvas.create_rectangle(
-            px, py, px + pw, py + ph,
-            fill="#1a1a2e", outline=theme["accent"], width=3)
+        panel_fill = theme.get("bg", "#1a1a2e")
+        panel_outline = theme.get("accent", "#4ade80")
+        self.canvas.create_rectangle(px, py, px + pw, py + ph, fill=panel_fill, outline=panel_outline, width=3)
 
-        # Title
-        msg   = "🎉 YOU WIN!" if status == "win" else "💀 GAME OVER"
-        color = "#4ade80"    if status == "win" else "#f87171"
-        self.canvas.create_text(
-            CW // 2, py + 45,
-            text=msg, font=self.title_font,
-            fill=color, anchor=tk.CENTER)
+        # Title text (subtle)
+        msg = "YOU WIN!" if status == "win" else "GAME OVER"
+        title_color = theme.get("accent", "#facc15")
+        self.canvas.create_text(CW // 2, py + 44, text=msg, font=self.title_font, fill=title_color, anchor=tk.CENTER)
 
-        # Word + score
+        # Word & score line
         sub = f"Word: {self.game.word}   |   Score: {score} pts"
-        self.canvas.create_text(
-            CW // 2, py + 85,
-            text=sub, font=self.body_font,
-            fill=BASE_TEXT, anchor=tk.CENTER)
+        self.canvas.create_text(CW // 2, py + 82, text=sub, font=self.body_font, fill=BASE_TEXT, anchor=tk.CENTER)
 
-        # Play Again button
-        again_tag = "again_btn"
-        self.canvas.create_rectangle(
-            px + 20, py + 140, px + 185, py + 185,
-            fill=theme["btn"], outline="")
-        self.canvas.create_text(
-            px + 102, py + 162,
-            text="▶ Play Again", font=self.body_font,
-            fill="#fff", tags=(again_tag,), anchor=tk.CENTER)
-        self.canvas.tag_bind(again_tag, "<Button-1>",
-                             lambda e: self._start_game(self.difficulty))
+        # Use existing button PNGs where available
+        play_img = self.loader.get_button("New_Game", width=220)
+        menu_img = self.loader.get_button("Back", width=180)
 
-        # Menu button
-        menu_tag = "end_menu_btn"
-        self.canvas.create_rectangle(
-            px + 235, py + 140, px + 400, py + 185,
-            fill="#333", outline="")
-        self.canvas.create_text(
-            px + 317, py + 162,
-            text="↩ Menu", font=self.body_font,
-            fill="#ccc", tags=(menu_tag,), anchor=tk.CENTER)
-        self.canvas.tag_bind(menu_tag, "<Button-1>",
-                             lambda e: self._show_main_menu())
+        # Place Play Again button (image if available)
+        if play_img:
+            lbl = tk.Label(self.master, image=play_img, bg=panel_fill, borderwidth=0)
+            lbl.image = play_img
+            lbl.bind("<Button-1>", lambda e: self._start_game(self.difficulty))
+            self.canvas.create_window(px + 110, py + 150, window=lbl)
+        else:
+            again_tag = "again_btn"
+            self.canvas.create_rectangle(px + 60, py + 140, px + 240, py + 185, fill=theme["btn"], outline="")
+            self.canvas.create_text(px + 150, py + 162, text="▶ Play Again", font=self.body_font, fill="#fff", tags=(again_tag,))
+            self.canvas.tag_bind(again_tag, "<Button-1>", lambda e: self._start_game(self.difficulty))
+
+        # Place Menu button (image if available)
+        if menu_img:
+            lbl2 = tk.Label(self.master, image=menu_img, bg=panel_fill, borderwidth=0)
+            lbl2.image = menu_img
+            lbl2.bind("<Button-1>", lambda e: self._show_main_menu())
+            self.canvas.create_window(px + pw - 110, py + 150, window=lbl2)
+        else:
+            menu_tag = "end_menu_btn"
+            self.canvas.create_rectangle(px + 260, py + 140, px + 420, py + 185, fill="#333", outline="")
+            self.canvas.create_text(px + 340, py + 162, text="↩ Menu", font=self.body_font, fill="#ccc", tags=(menu_tag,))
+            self.canvas.tag_bind(menu_tag, "<Button-1>", lambda e: self._show_main_menu())
 
     # ═════════════════════════════════════════════════════════════════════════
     # UTILS
