@@ -1,11 +1,11 @@
-import tkinter as tk
+import pygame
 from gui import HangmanApp
 
 
 def main():
-    root = tk.Tk()
-    app = HangmanApp(root)
-    root.mainloop()
+    pygame.init()
+    app = HangmanApp()
+    app.run()
 
 
 if __name__ == "__main__":
