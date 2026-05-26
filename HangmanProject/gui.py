@@ -410,6 +410,10 @@ class HangmanApp:
                 elif setting_type == "music":
                     # Toggle music on/off
                     self.music_enabled = not self.music_enabled
+                    if not self.music_enabled:
+                        self.audio.stop()
+                    elif self.current_screen == "settings":
+                        self.audio.play("menu.mp3", loops=-1, volume=0.7)
         
         if self.back_button and self.back_button.is_clicked(mouse_pos):
             self.current_screen = "main_menu"
